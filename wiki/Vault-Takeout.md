@@ -36,6 +36,7 @@
 * https://support.google.com/vault/answer/2474474
 
 ## Definitions
+[Collections of Items](Collections-of-Items)
 ```
 <AttendeeStatus> ::= accepted|declined|needsaction|tentative
 <EmailItem> ::= <EmailAddress>|<UniqueID>|<String>
@@ -53,6 +54,8 @@
 <RESearchPattern> ::= <RegularExpression>
 <RESubstitution> ::= <String>>
 
+<ChatSpace> ::= spaces/<String> | space/<String> | <String>
+<ChatSpaceList> ::= "<ChatSpace>(,<ChatSpace>)*"
 <ExportItem> ::= <UniqueID>|<String>
 <ExportStatus> ::= completed|failed|inprogrsss
 <ExportStatusList> ::= "<ExportStatus>(,<ExportStatus>)*"
@@ -60,6 +63,9 @@
 <MatterItem> ::= <UniqueID>|<String>
 <MatterState> ::= open|closed|deleted
 <MatterStateList> ::= "<MatterState>(,<MatterState>)*"
+<SharedDriveID> ::= <String>
+<SharedDriveIDList> ::= "<SharedDriveID>(,<SharedDriveID>)*"
+<URL> ::= <String>
 <URLList> ::= "<URL>(,<URL>)*"
 
 <QueryVaultCorpus> ::= <String>
@@ -199,11 +205,25 @@ This command can be useful for discovering legacy former employee accounts which
 gam print vaultcounts [todrive <ToDriveAttributes>*]
         matter <MatterItem> corpus mail|groups
         (accounts <EmailAddressEntity>) | (orgunit|org|ou <OrgUnitPath>) | everyone
+        [(shareddrives|teamdrives (<TeamDriveIDList>|(select <FileSelector>|<CSVFileSelector>))) |
+            (rooms (<ChatSpaceList>|(select <FileSelector>|<CSVFileSelector>))) |
+            (sitesurl (<URLList>||(select <FileSelector>|<CSVFileSelector>)))]
         [scope <all_data|held_data|unprocessed_data>]
         [terms <String>] [start|starttime <Date>|<Time>] [end|endtime <Date>|<Time>] [timezone <TimeZone>]
         [excludedrafts <Boolean>]
         [wait <Integer>]
 ```
+Specify the search method, this is optional:
+* `accounts <EmailAddressEntity>` - Search all accounts specified in `<EmailAddressEntity>`
+* `orgunit|org|ou <OrgUnitPath>` - Search all accounts in the OU `<OrgUnitPath>`
+* `everyone` - Search for all accounts in the organization
+* `shareddrives|teamdrives <SharedDriveIDList>` - Search for all accounts in the Shared Drives specified in `<SharedDriveIDList>`
+* `shareddrives|teamdrives select <FileSelector>|<CSVFileSelector>` - Search for all accounts in the Shared Drives specified in `<FileSelector>|<CSVFileSelector>`
+* `rooms <ChatSpaceList>` - Search in the Room specified in the chat rooms specified in `<ChatSpaceList>`
+* `rooms <ChatSpaceList>` - Search in the Room specified in the chat rooms specified in `<FileSelector>|<CSVFileSelector>`
+* `sitesurl <URLList>` - Search the published site URLs of new Google Sites in `<URLList>`
+* `sitesurl <URLList>` - Search the published site URLs of new Google Sites specified in `<FileSelector>|<CSVFileSelector>`
+
 Check the status of a previous count operation with the name from a previous command.
 ```
 gam print vaultcounts [todrive <ToDriveAttributes>*]
@@ -216,12 +236,15 @@ Create a Google Vault export request.
 ```
 gam create vaultexport|export matter <MatterItem> [name <String>] corpus calendar|drive|gemini|groups|hangouts_chat|mail|voice
         (accounts <EmailAddressEntity>) | (orgunit|org|ou <OrgUnitPath>) | everyone
-        (shareddrives|teamdrives <SharedDriveIDList>) | (rooms <RoomList>) | (sitesurl <URLList>)
+        (shareddrives|teamdrives (<TeamDriveIDList>|(select <FileSelector>|<CSVFileSelector>))) |
+            (rooms (<ChatSpaceList>|(select <FileSelector>|<CSVFileSelector>))) |
+            (sitesurl (<URLList>||(select <FileSelector>|<CSVFileSelector>)))
         [scope all_data|held_data|unprocessed_data]
         [terms <String>] [start|starttime <Date>|<Time>] [end|endtime <Date>|<Time>] [timezone <TimeZone>]
         [locationquery <StringList>] [peoplequery <StringList>] [minuswords <StringList>]
         [responsestatuses <AttendeeStatus>(,<AttendeeStatus>)*] [calendarversiondate <Date>|<Time>]
-        [includeshareddrives <Boolean>] [driveversiondate <Date>|<Time>] [includeaccessinfo <Boolean>]
+        [(includeshareddrives <Boolean>)|(shareddrivesoption included|included_if_account_is_not_a_member|not_included)]
+        [driveversiondate <Date>|<Time>] [includeaccessinfo <Boolean>]
         [driveclientsideencryption any|encrypted|unencrypted]
         [includerooms <Boolean>]
         [excludedrafts <Boolean>] [mailclientsideencryption any|encrypted|unencrypted]
@@ -250,8 +273,11 @@ Specify the search method, this option is required:
 * `orgunit|org|ou <OrgUnitPath>` - Search all accounts in the OU `<OrgUnitPath>`
 * `everyone` - Search for all accounts in the organization
 * `shareddrives|teamdrives <SharedDriveIDList>` - Search for all accounts in the Shared Drives specified in `<SharedDriveIDList>`
-* `rooms <RoomList>` - Search in the Room specified in the chat rooms specified in `<RoomList>`
-* `sitesurl <URLList>` - Search the published site URLs of new Google Sites
+* `shareddrives|teamdrives select <FileSelector>|<CSVFileSelector>` - Search for all accounts in the Shared Drives specified in `<FileSelector>|<CSVFileSelector>`
+* `rooms <ChatSpaceList>` - Search in the Room specified in the chat rooms specified in `<ChatSpaceList>`
+* `rooms <ChatSpaceList>` - Search in the Room specified in the chat rooms specified in `<FileSelector>|<CSVFileSelector>`
+* `sitesurl <URLList>` - Search the published site URLs of new Google Sites in `<URLList>`
+* `sitesurl <URLList>` - Search the published site URLs of new Google Sites specified in `<FileSelector>|<CSVFileSelector>`
 
 Specify the scope of data to include in the export:
 * `all_data` - All available data; this is the default
@@ -290,8 +316,11 @@ For `corpus calendar`, you can specify the format of the exported data:
 
 For `corpus drive`, you can specify advanced search options:
 * `driveversiondate <Date>|<Time>` - Search the versions of the Drive file as of the reference date. These timestamps are in GMT and rounded down to the given date.
-* `includeshareddrives False` - Do not include Shared Drives in the search, this is the default.
-* `includeshareddrives True` - Include Shared Drives in the search.
+* `includeshareddrives False` - Mapped to `sharedrivesoption included_if_account_is_not_a_member`
+* `includeshareddrives True` - Mapped to `sharedrivesoption included`
+* `sharedrivesoption included` - Resources in shared drives are included in the search
+* `sharedrivesoption included_if_account_is_not_a_member` - Resources in shared drives where account is not a member are included in the search, this is the default
+* `sharedrivesoption not_included` - Resources in shared drives are not included in the search
 * `driveclientsideencryption any` - Include both client-side encrypted and unencrypted content in search, this is the default.
 * `driveclientsideencryption encrypted` - Include client-side encrypted content only in search.
 * `driveclientsideencryption unencrypted` - Include client-side unencrypted content only in search.
@@ -574,7 +603,7 @@ gam create vaulthold|hold matter <MatterItem> [name <String>] corpus calendar|dr
         [terms <String>] [start|starttime <Date>|<Time>] [end|endtime <Date>|<Time>]
         [includerooms <Boolean>]
         [covereddata calllogs|textmessages|voicemails]
-        [includeshareddrives|includeteamdrives <Boolean>]
+        [includeshareddrives <Boolean>]
         [showdetails|returnidonly]
 ```
 Specify the name of the hold:
@@ -596,8 +625,8 @@ Specify the search method, this option is required:
 The `query <QueryVaultCorpus>` option can still be used but it is much simpler to use the following options.
 
 For `corpus drive`, you can specify advanced search options:
-* `includeshareddrives False` - Do not include Shared Drives in the search, this is the default.
-* `includeshareddrives True` - Include Shared Drives in the search.
+* `includeshareddrives False` - Files in shared drives are not included in the hold, this is the default
+* `includeshareddrives True` - Files in shared drives are included in the hold
 
 For `corpus mail`, you can specify search terms to limit the search.
 * `terms <String>` - [Vault search](https://support.google.com/vault/answer/2474474)
@@ -627,12 +656,12 @@ gam update vaulthold|hold <HoldItem> matter <MatterItem>
         [terms <String>] [start|starttime <Date>|<Time>] [end|endtime <Date>|<Time>]
         [includerooms <Boolean>]
         [covereddata calllogs|textmessages|voicemails]
-        [includeshareddrives|includeteamdrives <Boolean>]
+        [includeshareddrives <Boolean>]
         [showdetails]
 ```
 For a hold with `corpus drive`, you can specify advanced search options:
-* `includeshareddrives False` - Do not include Shared Drives in the search, this is the default.
-* `includeshareddrives True` - Include Shared Drives in the search.
+* `includeshareddrives False` - Files in shared drives are not included in the hold, this is the default
+* `includeshareddrives True` - Files in shared drives are included in the hold
 
 For a hold with `corpus mail`, you can specify search terms to limit the search.
 * `terms <String>` - [Vault search](https://support.google.com/vault/answer/2474474)

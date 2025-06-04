@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright (C) 2024 Ross Scroggs All Rights Reserved.
+# Copyright (C) 2025 Ross Scroggs All Rights Reserved.
 #
 # All Rights Reserved.
 #
@@ -72,7 +72,7 @@ Please go to:
 24. Paste it at the "Enter your Client Secret: " prompt in your terminal
 25. Press return/enter in your terminal
 26. Switch back to the browser
-27. Click "CANCEL"
+27. Click "OK"
 28. These steps are complete
 '''
 ENTER_YOUR_CLIENT_ID = '\nEnter your Client ID: '
@@ -145,7 +145,7 @@ SCOPE_AUTHORIZATION_PASSED = '''All scopes PASSED!
 Service Account Client name: {0} is fully authorized.
 '''
 SCOPE_AUTHORIZATION_UPDATE_PASSED = '''All scopes PASSED!
-To authorize them (in case some scopes were unselected), please go to the following link in your browser:
+To update authorization (in case some scopes were unselected), please go to the following link in your browser:
 {0}
     {1}
 
@@ -156,8 +156,8 @@ Click AUTHORIZE
 When the box closes you're done
 After authorizing it may take some time for this test to pass so wait a few moments and then try this command again.
 '''
-SCOPE_AUTHORIZATION_FAILED = '''Some scopes FAILED!
-To authorize them, please go to the following link in your browser:
+SCOPE_AUTHORIZATION_FAILED = '''Some scopes FAILED or should be DISABLED!
+To update authorization, please go to the following link in your browser:
 {0}
     {1}
 
@@ -287,6 +287,7 @@ GAM_OUT_OF_MEMORY = 'GAM has run out of memory. If this is a large Google Worksp
 GENERATING_NEW_PRIVATE_KEY = 'Generating new private key'
 GETTING = 'Getting'
 GETTING_ALL = 'Getting all'
+GRANTING_RIGHTS_TO_ROTATE_ITS_OWN_PRIVATE_KEY = '{0} rights to rotate its own private key'
 GOOGLE_DELEGATION_ERROR = 'Google delegation error, delegator and delegate both exist and are valid for delegation'
 GOT = 'Got'
 GROUP_MAPS_TO_MULTIPLE_OUS = 'File: {0}, Group: {1} references multiple OUs: {2}'
@@ -294,13 +295,12 @@ GROUP_MAPS_TO_OU_INVALID_ROW = 'File: {0}, Invalid row, must contain non-blank <
 GUARDIAN_INVITATION_STATUS_NOT_PENDING = 'Guardian invitation status is not PENDING'
 HAS_CHILD_ORGS = 'Has child {0}'
 HAS_INVALID_FORMAT = '{0}: {1}, Has invalid format'
-HAS_RIGHTS_TO_ROTATE_OWN_PRIVATE_KEY = 'Giving account {0} rights to rotate {1} private key'
 HEADER_NOT_FOUND_IN_CSV_HEADERS = 'Header "{0}" not found in CSV headers of "{1}".'
 HELP_SYNTAX = 'Help: Syntax in file {0}\n'
 HELP_WIKI = 'Help: Documentation is at {0}\n'
 IGNORED = 'Ignored'
 INSTRUCTIONS_CLIENT_SECRETS_JSON = 'Please run\n\ngam create|use project\ngam oauth create\n\nto create and authorize a Client account.\n'
-INSTRUCTIONS_OAUTH2SERVICE_JSON = 'Please run\n\ngam create|use project\ngam user <user> check serviceaccount\n\nto create and authorize a Service account.\n'
+INSTRUCTIONS_OAUTH2SERVICE_JSON = 'Please run\n\ngam create|use project\ngam user <user> update serviceaccount\n\nto create and authorize a Service account.\n'
 INSUFFICIENT_PERMISSIONS_TO_PERFORM_TASK = 'Insufficient permissions to perform this task'
 INTER_BATCH_WAIT_INCREASED = 'inter_batch_wait increased to {0:.2f}'
 INVALID = 'Invalid'
@@ -468,6 +468,10 @@ REFUSING_TO_DEPROVISION_DEVICES = 'Refusing to deprovision {0} devices because a
 REPLY_TO_CUSTOM_REQUIRES_EMAIL_ADDRESS = 'replyto REPLY_TO_CUSTOM requires customReplyTo <EmailAddress>'
 REQUEST_COMPLETED_NO_FILES = 'Request completed but no results/files were returned, try requesting again'
 REQUEST_NOT_COMPLETE = 'Request needs to be completed before downloading, current status is: {0}'
+RERUN_THE_COMMAND_AND_SPECIFY_A_NEW_SANAME = """
+Re-run the command specify a new service account name with: saname <ServiceAccountName>
+See: https://github.com/GAM-team/GAM/wiki/Authorization#advanced-use
+"""
 RESOURCE_CAPACITY_FLOOR_REQUIRED = 'Options "capacity <Number>" (<Number> > 0) and "floor <String>" required'
 RESOURCE_FLOOR_REQUIRED = 'Option "floor <String>" required'
 RESULTS_TOO_LARGE_FOR_GOOGLE_SPREADSHEET = 'Results are too large for Google Spreadsheets. Uploading as a regular CSV file.'
@@ -500,13 +504,15 @@ TO = 'To'
 TO_LC = 'to'
 TO_MAXIMUM_OF = 'to maximum of'
 TO_SET_UP_GOOGLE_CHAT = """
-To set up Google Chat for your API project, please go to:
+To set up Google Chat for your current project, please go to:
 
     {0}
 
 and follow the instructions at:
 
     https://github.com/GAM-team/GAM/wiki/Chat-Bot#set-up-a-chat-bot
+
+    You'll use projects/{1}/topics/no-topic in Connection settings Cloud Pub/Sub Topic Name
 """
 TOTAL_ITEMS_IN_ENTITY = 'Total {0} in {1}'
 TRIMMED_MESSAGE_FROM_LENGTH_TO_MAXIMUM = 'Trimmed message of length {0} to maximum length {1}'

@@ -22,12 +22,14 @@ defaults:
     working-directory: src
 
 env:
-  SCRATCH_COUNTER: 13
+  SCRATCH_COUNTER: 14
   OPENSSL_CONFIG_OPTS: no-fips --api=3.0.0
   OPENSSL_INSTALL_PATH: ${{ github.workspace }}/bin/ssl
   OPENSSL_SOURCE_PATH: ${{ github.workspace }}/src/openssl
   PYTHON_INSTALL_PATH: ${{ github.workspace }}/bin/python
   PYTHON_SOURCE_PATH: ${{ github.workspace }}/src/cpython
+  CRYPTOGRAPHY_BUILD_OPENSSL_NO_LEGACY: 1
+  CRYPTOGRAPHY_OPENSSL_NO_LEGACY: 1
 
 jobs:
   build:
@@ -39,79 +41,69 @@ jobs:
           - os: ubuntu-22.04
             jid: 1
             goal: build
-            arch: x86_64
-            openssl_archs: linux-x86_64
+            name: Build Intel Ubuntu Jammy
           - os: ubuntu-24.04
             jid: 2
             goal: build
-            arch: x86_64
-            openssl_archs: linux-x86_64
+            name: Build Intel Ubuntu Noble
           - os: ubuntu-24.04-arm
             jid: 3
             goal: build
-            arch: aarch64
-            openssl_archs: linux-aarch64
+            name: Build Arm Ubuntu Noble
           - os: ubuntu-22.04-arm
             jid: 4
             goal: build
-            arch: aarch64
-            openssl_archs: linux-aarch64
+            name: Build Arm Ubuntu Jammy
           - os: ubuntu-22.04
             jid: 5
             goal: build
-            arch: x86_64
-            openssl_archs: linux-x86_64
             staticx: yes
+            name: Build Intel StaticX Legacy
           - os: ubuntu-22.04-arm
             jid: 6
             goal: build
-            arch: aarch64
-            openssl_archs: linux-aarch64
             staticx: yes
+            name: Build Arm StaticX Legacy
           - os: macos-13
             jid: 7
             goal: build
-            arch: x86_64
-            openssl_archs: darwin64-x86_64
+            name: Build Intel MacOS
           - os: macos-14
             jid: 8
             goal: build
-            arch: aarch64
-            openssl_archs: darwin64-arm64
+            name: Build Arm MacOS 14
           - os: macos-15
             jid: 9
             goal: build
-            arch: aarch64
-            openssl_archs: darwin64-arm64
+            name: Build Arm MacOS 15
           - os: windows-2022
             jid: 10
             goal: build
-            arch: Win64
-            openssl_archs: VC-WIN64A
-          # disable 3.9 test for now since it's oldest and due
-          # for removal in Oct 2025. We only have 13 jid accounts
-          # so we need this one off but can re-enable at some point
-          # if we feel the need.
-          #- os: ubuntu-24.04
-          #  goal: test
-          #  python: "3.9"
-          #  jid: 11
-          #  arch: x86_64
+            name: Build Intel Windows
+          - os: windows-11-arm
+            jid: 11
+            goal: build
+            name: Build Arm Windows
           - os: ubuntu-24.04
             goal: test
             python: "3.10"
-            jid: 11
-            arch: x86_64
+            jid: 12
+            name: Test Python 3.10
           - os: ubuntu-24.04
             goal: test
             python: "3.11"
-            jid: 12
-            arch: x86_64
+            jid: 13
+            name: Test Python 3.11
           - os: ubuntu-24.04
             goal: test
             python: "3.12"
-            jid: 13
-            arch: x86_64
+            jid: 14
+            name: Test Python 3.12
+          - os: ubuntu-24.04
+            goal: test
+            python: "3.14-dev"
+            jid: 15
+            name: Test Python 3.14-dev
 
     steps:
 
@@ -134,7 +126,7 @@ jobs:
         with:
           path: |
             cache.tar.xz
-          key: gam-${{ matrix.jid }}-20250408-01
+          key: gam-${{ matrix.jid }}-20250603
 
       - name: Untar Cache archive
         if: matrix.goal == 'build' && steps.cache-python-ssl.outputs.cache-hit == 'true'
@@ -148,15 +140,25 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           allow-prereleases: true
+          check-latest: true
 
       - name: common variables for all runs
         env:
-          arch: ${{ matrix.arch }}
           JID: ${{ matrix.jid }}
           ACTIONS_CACHE: ${{ steps.cache-python-ssl.outputs.cache-hit }}
           ACTIONS_GOAL: ${{ matrix.goal }}
         run: |
-          echo "arch=${arch}" >> $GITHUB_ENV
+          case $RUNNER_ARCH in
+            X64)
+              echo "arch=x86_64" >> $GITHUB_ENV
+              ;;
+            ARM64)
+              echo "arch=arm64" >> $GITHUB_ENV
+              ;;
+            *)
+              echo "arch=${RUNNER_ARCH}" >> $GITHUB_ENV
+              ;;
+          esac 
           echo "JID=${JID}" >> $GITHUB_ENV
           echo "ACTIONS_CACHE=${ACTIONS_CACHE}" >> $GITHUB_ENV
           echo "ACTIONS_GOAL=${ACTIONS_GOAL}" >> $GITHUB_ENV
@@ -170,20 +172,12 @@ jobs:
           echo "curl_retry=${curl_retry}" >> $GITHUB_ENV
           # GAMCFGDIR should be recreated on every run
           GAMCFGDIR="${RUNNER_TEMP}/.gam"
-          if [ "$arch" == "Win64" ]; then
+          if [ "$RUNNER_OS" == "Windows" ]; then
             GAMCFGDIR=$(cygpath -u "$GAMCFGDIR")
           fi
           echo "GAMCFGDIR=${GAMCFGDIR}" >> $GITHUB_ENV
           echo "GAMCFGDIR is: ${GAMCFGDIR}"
-          if [[ "${RUNNER_OS}" == "macOS" ]]; then
-            GAMOS="macos"
-          elif [[ "${RUNNER_OS}" == "Linux" ]]; then
-            GAMOS="linux"
-          elif [[ "${RUNNER_OS}" == "Windows" ]]; then
-            GAMOS="windows"
-          else
-           GAMOS='unknown'
-          fi
+          export GAMOS=$(echo "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')
           echo "GAMOS=${GAMOS}" >> $GITHUB_ENV
           echo "GAMOS is: ${GAMOS}"
 
@@ -205,7 +199,7 @@ jobs:
         run: |
           echo "RUNNING: apt update..."
           sudo apt-get -qq --yes update
-          sudo apt-get -qq --yes install swig libpcsclite-dev libxslt1-dev libsqlite3-dev
+          sudo apt-get -qq --yes install swig libpcsclite-dev libxslt1-dev libsqlite3-dev libffi-dev pkg-config
 
       - name: MacOS install tools
         if: runner.os == 'macOS'
@@ -232,23 +226,15 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows' && steps.cache-python-ssl.outputs.cache-hit != 'true'
         with:
-          arch: ${{ matrix.arch }}
+          arch: ${{ runner.arch }}
 
       - name: Set Env Variables for build
         if: matrix.goal == 'build'
         env:
-          openssl_archs: ${{ matrix.openssl_archs }}
           staticx: ${{ matrix.staticx }}
         run: |
           echo "We are running on ${RUNNER_OS}"
           LD_LIBRARY_PATH="${OPENSSL_INSTALL_PATH}/lib:${PYTHON_INSTALL_PATH}/lib:/usr/local/lib"
-          if [[ "${arch}" == "Win64" ]]; then
-            PYEXTERNALS_PATH="amd64"
-            PYBUILDRELEASE_ARCH="x64"
-            GAM_ARCHIVE_ARCH="x86_64"
-            WIX_ARCH="x64"
-            CHOC_OPS=""
-          fi
           if [[ "${RUNNER_OS}" == "macOS" ]]; then
             MAKE=make
             MAKEOPT="-j$(sysctl -n hw.logicalcpu)"
@@ -266,9 +252,15 @@ jobs:
             MAKE=nmake
             MAKEOPT=""
             PERL="c:\strawberry\perl\bin\perl.exe"
+            if [[ "$RUNNER_ARCH" == "ARM64" ]]; then
+              PYEXTERNALS_PATH="arm64"
+              WIX_ARCH="arm64"
+            elif [[ "$RUNNER_ARCH" == "X64" ]]; then
+              PYEXTERNALS_PATH="amd64"
+              WIX_ARCH="x64"
+            fi
             LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:${PYTHON_SOURCE_PATH}/PCbuild/${PYEXTERNALS_PATH}"
             echo "PYTHON=${PYTHON_SOURCE_PATH}/PCbuild/${PYEXTERNALS_PATH}/python.exe" >> $GITHUB_ENV
-            echo "GAM_ARCHIVE_ARCH=${GAM_ARCHIVE_ARCH}" >> $GITHUB_ENV
             echo "WIX_ARCH=${WIX_ARCH}" >> $GITHUB_ENV
           fi
           echo "We'll run make with: ${MAKEOPT}"
@@ -278,8 +270,6 @@ jobs:
           echo "MAKEOPT=${MAKEOPT}" >> $GITHUB_ENV
           echo "PERL=${PERL}" >> $GITHUB_ENV
           echo "PYEXTERNALS_PATH=${PYEXTERNALS_PATH}" >> $GITHUB_ENV
-          echo "PYBUILDRELEASE_ARCH=${PYBUILDRELEASE_ARCH}" >> $GITHUB_ENV
-          echo "openssl_archs=${openssl_archs}" >> $GITHUB_ENV
 
       - name: Get latest stable OpenSSL source
         if: matrix.goal == 'build' && steps.cache-python-ssl.outputs.cache-hit != 'true'
@@ -293,29 +283,21 @@ jobs:
           git checkout "${LATEST_STABLE_TAG}"
           export COMPILED_OPENSSL_VERSION=${LATEST_STABLE_TAG:8} # Trim the openssl- prefix
           echo "COMPILED_OPENSSL_VERSION=${COMPILED_OPENSSL_VERSION}" >> $GITHUB_ENV
-          if ([ "${RUNNER_OS}" == "macOS" ] && [ "$arch" == "universal2" ]); then
-            for openssl_arch in $openssl_archs; do
-              ssldir="${OPENSSL_SOURCE_PATH}-${openssl_arch}"
-              mkdir -v "${ssldir}"
-              cp -vrf ${OPENSSL_SOURCE_PATH}/* "${ssldir}/"
-            done
-            rm -vrf "${OPENSSL_SOURCE_PATH}"
-          else
-            mv -v "${OPENSSL_SOURCE_PATH}" "${OPENSSL_SOURCE_PATH}-${openssl_archs}"
-          fi
 
       - name: Windows NASM Install
         uses: ilammy/setup-nasm@v1
-        if: matrix.goal == 'build' && runner.os == 'Windows' && steps.cache-python-ssl.outputs.cache-hit != 'true'
+        if: matrix.goal == 'build' && runner.os == 'Windows' && runner.arch == 'X64' && steps.cache-python-ssl.outputs.cache-hit != 'true'
 
       - name: Config OpenSSL
         if: matrix.goal == 'build' && steps.cache-python-ssl.outputs.cache-hit != 'true'
         run: |
-          for openssl_arch in $openssl_archs; do
-            cd "${GITHUB_WORKSPACE}/src/openssl-${openssl_arch}"
-            # --libdir=lib is needed so Python can find OpenSSL libraries
-            "${PERL}" ./Configure "${openssl_arch}" --libdir=lib --prefix="${OPENSSL_INSTALL_PATH}" $OPENSSL_CONFIG_OPTS
-          done
+          cd "${OPENSSL_SOURCE_PATH}"
+          if ([ "$RUNNER_OS" == "Windows" ] && [ "$RUNNER_ARCH" == "ARM64" ]); then
+            # https://github.com/openssl/openssl/issues/26239
+            export CFLAGS=-DNO_INTERLOCKEDOR64
+          fi
+          # --libdir=lib is needed so Python can find OpenSSL libraries
+          "${PERL}" ./Configure --libdir=lib --prefix="${OPENSSL_INSTALL_PATH}" $OPENSSL_CONFIG_OPTS
 
       - name: Rename GNU link on Windows
         if: matrix.goal == 'build' && runner.os == 'Windows' && steps.cache-python-ssl.outputs.cache-hit != 'true'
@@ -326,53 +308,29 @@ jobs:
       - name: Make OpenSSL
         if: matrix.goal == 'build' && steps.cache-python-ssl.outputs.cache-hit != 'true'
         run: |
-          for openssl_arch in $openssl_archs; do
-            cd "${GITHUB_WORKSPACE}/src/openssl-${openssl_arch}"
-            $MAKE "${MAKEOPT}"
-          done
+          cd "${OPENSSL_SOURCE_PATH}"
+          # TODO: remove this once https://github.com/openssl/openssl/issues/26239 is fixed.
+          if ([ "$RUNNER_OS" == "Windows" ] && [ "$RUNNER_ARCH" == "ARM64" ]); then
+            export CFLAGS=-DNO_INTERLOCKEDOR64
+          fi
+          $MAKE "$MAKEOPT"
 
       - name: Install OpenSSL
         if: matrix.goal == 'build' && steps.cache-python-ssl.outputs.cache-hit != 'true'
         run: |
-          if ([ "${RUNNER_OS}" == "macOS" ] && [ "$arch" == "universal2" ]); then
-            for openssl_arch in $openssl_archs; do
-              cd "${GITHUB_WORKSPACE}/src/openssl-${openssl_arch}"
-              # install_sw saves us ages processing man pages :-)
-              $MAKE install_sw
-              mv -v "${OPENSSL_INSTALL_PATH}" "${GITHUB_WORKSPACE}/bin/ssl-${openssl_arch}"
-            done
-            mkdir -vp "${OPENSSL_INSTALL_PATH}/lib"
-            mkdir -vp "${OPENSSL_INSTALL_PATH}/bin"
-            for archlib in libcrypto.3.dylib libssl.3.dylib libcrypto.a libssl.a; do
-              lipo -create "${GITHUB_WORKSPACE}/bin/ssl-darwin64-x86_64/lib/${archlib}" \
-                           "${GITHUB_WORKSPACE}/bin/ssl-darwin64-arm64/lib/${archlib}" \
-                   -output "${GITHUB_WORKSPACE}/bin/ssl/lib/${archlib}"
-            done
-            mv ${GITHUB_WORKSPACE}/bin/ssl-darwin64-x86_64/include ${GITHUB_WORKSPACE}/bin/ssl/
-            lipo -create "${GITHUB_WORKSPACE}/bin/ssl-darwin64-x86_64/bin/openssl" \
-                         "${GITHUB_WORKSPACE}/bin/ssl-darwin64-arm64/bin/openssl" \
-                 -output "${GITHUB_WORKSPACE}/bin/ssl/bin/openssl"
-            rm -rf ${GITHUB_WORKSPACE}/bin/ssl-darwin64-x86_64
-            rm -rf ${GITHUB_WORKSPACE}/bin/ssl-darwin64-arm64
-          else
-            cd "${GITHUB_WORKSPACE}/src/openssl-${openssl_archs}"
-            # install_sw saves us ages processing man pages :-)
-            $MAKE install_sw
-          fi
+          cd "${OPENSSL_SOURCE_PATH}"
+          # install_sw saves us ages processing man pages :-)
+          $MAKE install_sw
           if [[ "${RUNNER_OS}" != "Windows" ]]; then
             echo "LDFLAGS=-L${OPENSSL_INSTALL_PATH}/lib" >> $GITHUB_ENV
           fi
           echo "CRYPTOGRAPHY_SUPPRESS_LINK_FLAGS=1" >> $GITHUB_ENV
-          case $arch in
-            universal2)
-              echo "CFLAGS=-I${OPENSSL_INSTALL_PATH}/include -arch arm64 -arch x86_64 ${CFLAGS}" >> $GITHUB_ENV
-              echo "ARCHFLAGS=-arch x86_64 -arch arm64" >> $GITHUB_ENV
-              ;;
-            x86_64)
+          case $RUNNER_ARCH in
+            X64)
               echo "CFLAGS=-I${OPENSSL_INSTALL_PATH}/include ${CFLAGS}" >> $GITHUB_ENV
               echo "ARCHFLAGS=-arch x86_64" >> $GITHUB_ENV
               ;;
-            aarch64)
+            ARM64)
               echo "CFLAGS=-I${OPENSSL_INSTALL_PATH}/include ${CFLAGS}" >> $GITHUB_ENV
               echo "ARCHFLAGS=-arch arm64" >> $GITHUB_ENV
               ;;
@@ -399,18 +357,12 @@ jobs:
         if: matrix.goal == 'build' && runner.os != 'Windows' && steps.cache-python-ssl.outputs.cache-hit != 'true'
         run: |
           cd "${PYTHON_SOURCE_PATH}"
-          if ([ "${RUNNER_OS}" == "macOS" ] && [ "$arch" == "universal2" ]); then
-            extra_args=( "--enable-universalsdk" "--with-universal-archs=universal2" )
-          else
-            extra_args=( )
-          fi
           ./configure --with-openssl="${OPENSSL_INSTALL_PATH}" \
                       --prefix="${PYTHON_INSTALL_PATH}" \
                       --enable-shared \
                       --with-ensurepip=upgrade \
                       --enable-optimizations \
-                      --with-lto \
-                      "${extra_args[@]}" || : # exit 0
+                      --with-lto || : # exit 0
           cat config.log
 
       - name: Windows Get External Python deps
@@ -430,10 +382,15 @@ jobs:
           Remove-Item -recurse -force "${env:OPENSSL_EXT_PATH}*"
           # Emulate what this script does:
           # https://github.com/python/cpython/blob/main/PCbuild/openssl.vcxproj
-          $env:OPENSSL_EXT_TARGET_PATH = "${env:OPENSSL_EXT_PATH}${env:PYEXTERNALS_PATH}"
+          if (${env:RUNNER_ARCH} -eq "X64") {
+            $env:ossl_path = "amd64"
+          } elseif (${env:RUNNER_ARCH} -eq "ARM64") {
+            $env:ossl_path =  "arm64"
+          }
+          $env:OPENSSL_EXT_TARGET_PATH = "${env:OPENSSL_EXT_PATH}${env:ossl_path}"
           echo "Copying our OpenSSL to ${env:OPENSSL_EXT_TARGET_PATH}"
           mkdir "${env:OPENSSL_EXT_TARGET_PATH}\include\openssl\"
-          Copy-Item -Path "${env:GITHUB_WORKSPACE}/src/openssl-${env:openssl_archs}\LICENSE.txt" -Destination "${env:OPENSSL_EXT_TARGET_PATH}\LICENSE" -Verbose
+          Copy-Item -Path "${env:OPENSSL_SOURCE_PATH}\LICENSE.txt" -Destination "${env:OPENSSL_EXT_TARGET_PATH}\LICENSE"
           cp -v "$env:OPENSSL_INSTALL_PATH\lib\*" "${env:OPENSSL_EXT_TARGET_PATH}"
           cp -v "$env:OPENSSL_INSTALL_PATH\bin\*" "${env:OPENSSL_EXT_TARGET_PATH}"
           cp -v "$env:OPENSSL_INSTALL_PATH\include\openssl\*" "${env:OPENSSL_EXT_TARGET_PATH}\include\openssl\"
@@ -454,8 +411,15 @@ jobs:
           cd "${env:PYTHON_SOURCE_PATH}"
           # We need out custom openssl.props which uses OpenSSL 3 DLL names
           Copy-Item -Path "${env:GITHUB_WORKSPACE}\src\tools\openssl.props" -Destination PCBuild\ -Verbose
-          echo "Building for ${env:PYBUILDRELEASE_ARCH}..."
-          PCBuild\build.bat -m --pgo -c Release -p "${env:PYBUILDRELEASE_ARCH}"
+          if (${env:RUNNER_ARCH} -eq "X64") {
+            $env:arch = "x64"
+            PCBuild\build.bat -c Release -p $env:arch --pgo
+          } elseif (${env:RUNNER_ARCH} -eq "ARM64") {
+            $env:arch =  "ARM64"
+            # TODO: figure out why Windows ARM64 isn't compat with PGO optimiazation
+            # causes 10-20% slowdown in Python
+            PCBuild\build.bat -c Release -p $env:arch
+          }
 
       - name: Mac/Linux Build Python
         if: matrix.goal == 'build' && runner.os != 'Windows' && steps.cache-python-ssl.outputs.cache-hit != 'true'
@@ -482,46 +446,43 @@ jobs:
       - name: Upgrade pip, wheel, etc
         run: |
           curl $curl_retry -O https://bootstrap.pypa.io/get-pip.py
-          "${PYTHON}" get-pip.py
-          "${PYTHON}" -m pip install --upgrade pip
-          "${PYTHON}" -m pip install --upgrade wheel
-          "${PYTHON}" -m pip install --upgrade setuptools
+          "$PYTHON" get-pip.py
+          "$PYTHON" -m pip install --upgrade pip
+          "$PYTHON" -m pip install --upgrade wheel
+          "$PYTHON" -m pip install setuptools
+          "$PYTHON" -m pip install --upgrade importlib-metadata
+          "$PYTHON" -m pip install --upgrade setuptools-scm
+          "$PYTHON" -m pip list
+
+      - name: Custom wheels for Win arm64
+        if: runner.os == 'Windows' && runner.arch == 'ARM64'
+        run: |
+          latest_lxml_whl=$(curl https://api.github.com/repos/GAM-team/lxml-wheel/releases/latest -s | jq -r .assets.[0].browser_download_url)
+          echo "Downloading ${latest_lxml_whl}..."
+          curl -O -L "$latest_lxml_whl"
+          "$PYTHON" -m pip install lxml*.whl
+          latest_crypt_whl=$(curl https://api.github.com/repos/jay0lee/cryptography/releases/latest -s | jq -r .assets.[0].browser_download_url)
+          echo "Downloading ${latest_crypt_whl}..."
+          curl -O -L "$latest_crypt_whl"
+          "$PYTHON" -m pip install cryptography*.whl
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+     # - name: Compile cryptography from source (no legacy)
+     #   if: runner.os != 'Windows' || runner.arch != 'ARM64'
+     #   run: |
+     #     pip install --no-binary ":all:" --force cryptography
 
       - name: Install pip requirements
         run: |
           echo "before anything..."
-          "${PYTHON}" -m pip list
-          if ([ "${RUNNER_OS}" == "macOS" ] && [ "$arch" == "universal2" ]); then
-            # cffi is a dep of cryptography and doesn't ship
-            # a universal2 wheel so we must build one ourself :-/
-            export CFLAGS="-arch x86_64 -arch arm64"
-            export ARCHFLAGS="-arch x86_64 -arch arm64"
-            "${PYTHON}" -m pip install --upgrade --force-reinstall --no-binary :all: \
-                              --no-cache-dir --no-deps --use-pep517 \
-                              --use-feature=no-binary-enable-wheel-cache \
-                              cffi 
-            echo "before cryptography..."
-            "${PYTHON}" -m pip list
-            # cryptography has a universal2 wheel but getting it installed
-            # on x86-64 MacOS is a royal pain in the keester.
-            "${PYTHON}" -m pip download --only-binary :all: \
-                                          --dest . \
-                                          --no-cache \
-                                          --no-deps \
-                                          --platform macosx_10_15_universal2 \
-                                          cryptography
-            "${PYTHON}" -m pip install --force-reinstall --no-deps cryptography*.whl
-            echo "after cryptography..."
-            "${PYTHON}" -m pip list
-            "${PYTHON}" -m pip install --upgrade --no-binary :all: -r requirements.txt
-          else
-            "${PYTHON}" -m pip install --upgrade -r requirements.txt
-            echo "after requirements..."
-            "${PYTHON}" -m pip list
-            "${PYTHON}" -m pip install --force-reinstall --no-deps --upgrade cryptography
-          fi
+          "$PYTHON" -m pip list
+          "$PYTHON" -m pip install --upgrade -r requirements.txt
+          echo "after requirements..."
+          "$PYTHON" -m pip list
+          #"$PYTHON" -m pip install --force-reinstall --no-deps --upgrade cryptography
           echo "after everything..."
-          "${PYTHON}" -m pip list
+          "$PYTHON" -m pip list
 
       - name: Install PyInstaller
         if: matrix.goal == 'build'
@@ -534,14 +495,7 @@ jobs:
           # remove pre-compiled bootloaders so we fail if bootloader compile fails
           rm -rvf PyInstaller/bootloader/*-*/*
           cd bootloader
-          export PYINSTALLER_BUILD_ARGS=""
-          case "${arch}" in
-            "Win64")
-              export PYINSTALLER_BUILD_ARGS="--target-arch=64bit"
-              ;;
-          esac
-          echo "PyInstaller build arguments: ${PYINSTALLER_BUILD_ARGS}"
-          "${PYTHON}" ./waf all $PYINSTALLER_BUILD_ARGS
+          "${PYTHON}" ./waf all
           cd ..
           echo "---- Installing PyInstaller ----"
           "${PYTHON}" -m pip install .
@@ -652,14 +606,12 @@ jobs:
           echo "GAM Version ${GAMVERSION}"
           echo "GAMVERSION=${GAMVERSION}" >> $GITHUB_ENV
 
-      - name: Configure service account auth
+      - name: Configure user and service account auth
         id: configserviceaccount
         env:
-          PASSCODE: ${{ secrets.PASSCODE }}
+          oa2: ${{ secrets[format('GAM_GHA_{0}', matrix.jid)] }}
         run: |
-          source ../.github/actions/decrypt.sh ../.github/actions/creds.tar.xz.gpg creds.tar.xz "${GAMCFGDIR}"
-          mv -v "${GAMCFGDIR}/oauth2.txt-gam-gha-${JID}" "${GAMCFGDIR}/oauth2.txt"
-          rm -v $GAMCFGDIR/oauth2.txt-gam*
+          ../.github/actions/decrypt.sh "${GAMCFGDIR}"
           $gam create signjwtserviceaccount
 
       - name: Upload gam.exe Windows for signing
@@ -707,22 +659,29 @@ jobs:
             else
               libver="glibc$(ldd --version | awk '/ldd/{print $NF}')"
             fi
-            GAM_ARCHIVE="${GITHUB_WORKSPACE}/gam-${GAMVERSION}-linux-$(arch)-${libver}.tar.xz"
+            GAM_ARCHIVE="${GITHUB_WORKSPACE}/gam-${GAMVERSION}-linux-${arch}-${libver}.tar.xz"
           fi
           echo "GAM Archive ${GAM_ARCHIVE}"
           tar -C "${gampath}/.." --create --verbose --exclude-from "${GITHUB_WORKSPACE}/.github/actions/package_exclusions.txt" --file $GAM_ARCHIVE --xz gam7
 
-      - name: Windows package
+      - name: Install Wix on Win ARM64
+        if: runner.os == 'Windows' && runner.arch == 'ARM64'
+        run: |
+          choco install wixtoolset
+
+      - name: Windows package zip
         if: runner.os == 'Windows' && matrix.goal != 'test'
         run: |
           echo "started in $(pwd)"
           cd "${gampath}/.."
           echo "moved to $(pwd)"
-          GAM_ARCHIVE="${GITHUB_WORKSPACE}/gam-${GAMVERSION}-windows-${GAM_ARCHIVE_ARCH}.zip"
+          GAM_ARCHIVE="${GITHUB_WORKSPACE}/gam-${GAMVERSION}-windows-${arch}.zip"
           /c/Program\ Files/7-Zip/7z.exe a -tzip "$GAM_ARCHIVE" gam7 "-xr@${GITHUB_WORKSPACE}/.github/actions/package_exclusions.txt" -bb3
-          cd ../..
-          echo "moved to $(pwd)"
-          export MSI_FILENAME="${GITHUB_WORKSPACE}/gam-${GAMVERSION}-windows-${GAM_ARCHIVE_ARCH}.msi"
+
+      - name: Windows package MSI
+        if: runner.os == 'Windows' && matrix.goal != 'test'
+        run: |
+          export MSI_FILENAME="${GITHUB_WORKSPACE}/gam-${GAMVERSION}-windows-${arch}.msi"
           # auto-generate a lib.wxs based on the files PyInstaller created for the lib/ directory
           /c/Program\ Files\ \(x86\)/WiX\ Toolset\ v3.14/bin/heat.exe dir "${gampath}/lib" -ke -srd -cg Lib -gg -dr lib -directoryid lib -out lib.wxs
           $PYTHON tools/gen-wix-xml-filelist.py lib.wxs

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright (C) 2024 Ross Scroggs All Rights Reserved.
+# Copyright (C) 2025 Ross Scroggs All Rights Reserved.
 #
 # All Rights Reserved.
 #
@@ -423,8 +423,6 @@ class GamCLArgs():
   ARG_ANALYTICDATASTREAMS = 'analyticdatastreams'
   ARG_ANALYTICPROPERTY = 'analyticproperty'
   ARG_ANALYTICPROPERTIES = 'analyticproperties'
-  ARG_ANALYTICUAPROPERTY = 'analyticuaproperty'
-  ARG_ANALYTICUAPROPERTIES = 'analyticuaproperties'
   ARG_API = 'api'
   ARG_APIS = 'apis'
   ARG_APIPROJECT = 'apiproject'
@@ -618,7 +616,6 @@ class GamCLArgs():
   ARG_FORWARDS = 'forwards'
   ARG_FORWARDINGADDRESS = 'forwardingaddress'
   ARG_FORWARDINGADDRESSES = 'forwardingaddresses'
-  ARG_GAL = 'gal'
   ARG_GCPFOLDER = 'gcpfolder'
   ARG_GCPSERVICEACCOUNT = 'gcpserviceaccount'
   ARG_GMAIL = 'gmail'
@@ -758,6 +755,7 @@ class GamCLArgs():
   ARG_SHAREDDRIVES = 'shareddrives'
   ARG_SHAREDDRIVEACLS = 'shareddriveacls'
   ARG_SHAREDDRIVEINFO = 'shareddriveinfo'
+  ARG_SHAREDDRIVEORGANIZERS = 'shareddriveorganizers'
   ARG_SHAREDDRIVETHEMES = 'shareddrivethemes'
   ARG_SHEET = 'sheet'
   ARG_SHEETS = 'sheets'
@@ -787,6 +785,7 @@ class GamCLArgs():
   ARG_TEAMDRIVES = 'teamdrives'
   ARG_TEAMDRIVEACLS = 'teamdriveacls'
   ARG_TEAMDRIVEINFO = 'teamdriveinfo'
+  ARG_TEAMDRIVEORGANIZERS = 'teamdriveorganizers'
   ARG_TEAMDRIVETHEMES = 'teamdrivethemes'
   ARG_THREAD = 'thread'
   ARG_THREADS = 'threads'
@@ -849,6 +848,7 @@ class GamCLArgs():
   OB_CHAT_MESSAGE = 'ChatMessage'
   OB_CHAT_MESSAGE_ID = 'ChatMessageID'
   OB_CHAT_SPACE = 'ChatSpace'
+  OB_CHAT_SPACE_LIST = 'ChatSpaceList'
   OB_CHAT_THREAD = 'ChatThread'
   OB_CHROMEPROFILE_ID = 'ChromeProfileId'
   OB_CHROME_VERSION = 'ChromeVersion'
@@ -966,6 +966,7 @@ class GamCLArgs():
   OB_MOBILE_ENTITY = 'MobileEntity'
   OB_NETWORK_ID = 'networkID'
   OB_NAME = 'Name'
+  OB_ORGANIZER_TYPE_LIST = 'OrganizerTypeList'
   OB_ORGUNIT_ENTITY = 'OrgUnitEntity'
   OB_ORGUNIT_ITEM = 'OrgUnitItem'
   OB_ORGUNIT_PATH = 'OrgUnitPath'
@@ -996,7 +997,6 @@ class GamCLArgs():
   OB_ROLE_ASSIGNMENT_ID = 'RoleAssignmentID'
   OB_ROLE_ITEM = 'RoleItem'
   OB_ROLE_LIST = 'RoleList'
-  OB_ROOM_LIST = 'RoomList'
   OB_SCHEMA_ENTITY = 'SchemaEntity'
   OB_SCHEMA_NAME = 'SchemaName'
   OB_SCHEMA_NAME_FIELD_NAME = 'SchemaName.FieldName'

@@ -1,4 +1,5 @@
 # Cloud Identity Devices
+- [Notes](#notes)
 - [API documentation](#api-documentation)
 - [Query documentation](#query-documentation)
 - [Definitions](#definitions)
@@ -19,6 +20,15 @@
 - [Print device users](#print-device-users)
 - [Display device user client state](#display-device-user-client-state)
 - [Update device user client state](#update-device-user-client-state)
+
+## Notes
+These commands use service account access with `admin_email` (if defined) from `gam.cfg` or
+the admin from `oauth2.txt` (specified in `gam oauth create`).
+
+Use `gam user user@domain.com update serviceaccount` and make sure that the following is specified:
+```
+[*] 17)  Cloud Identity Devices API (supports readonly)
+```
 
 ## API documentation
 * [Cloud Identity API - Devices](https://cloud.google.com/identity/docs/reference/rest/v1/devices)
@@ -200,7 +210,7 @@ gam print devices [todrive <ToDriveAttribute>*]
         <DeviceFieldName>* [fields <DeviceFieldNameList>] [userfields <DeviceUserFieldNameList>]
         [orderby <DeviceOrderByFieldName> [ascending|descending]]
         [all|company|personal|nocompanydevices|nopersonaldevices]
-        [nodeviceusers]
+        [nodeviceusers|oneuserperrow]
         [formatjson [quotechar <Character>]]
 ```
 By default, all devices are displayed; use the query options to limit the display.
@@ -220,6 +230,9 @@ Select the view of devices to display:
 
 By default, Gam makes additional API calls to display the device users for the devices;
 use `nodeviceuser` to suppress making the additional calls.
+
+By default, when device users are displayed, they are all displayed on one row;
+use `oneuserperrow` to have each of a device's users displayed on a separate row with all of the other device fields.
 
 By default, Gam displays the information as columns of fields; the following option causes the output to be in JSON format,
 * `formatjson` - Display the fields in JSON format.

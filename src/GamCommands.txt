@@ -322,7 +322,8 @@ If an item contains spaces, it should be surrounded by ".
         wsess | workspaceesentials | gsuiteessentials | essentials | d4e | driveenterprise | drive4enterprise | 1010060001 | Google Workspace Essentials |
         wsessplus | workspaceessentialsplus | 1010060005 | Google Workspace Essentials Plus |
         wsflw | workspacefrontline | workspacefrontlineworker | 1010020030 | Google Workspace Frontline Starter |
-        wsflwstan | workspacefrontlinestan | workspacefrontlineworkerstan | 1010020031 | Google Workspace Frontline Standard
+        wsflwstan | workspacefrontlinestan | workspacefrontlineworkerstan | 1010020031 | Google Workspace Frontline Standard |
+        wsflwplus | workspacefrontlineplus | workspacefrontlineworkerplus | 1010020034 | Google Workspace Frontline Plus
 
 ## Items built from primitives
 
@@ -782,7 +783,7 @@ Items, separated by spaces, with spaces, commas or single quotes in the items th
 
 ## Collections of ChromeOS Devices
 
-Specify a collection of ChromeOS devices by directly specifying them or by specifiying items that will yield a list of ChromeOS devices.
+Specify a collection of ChromeOS devices by directly specifying them or by specifying items that will yield a list of ChromeOS devices.
 
 <CrOSTypeEntity> ::=
         (all cros)|
@@ -865,7 +866,7 @@ Specify a collection of ChromeOS devices by directly specifying them or by speci
 
 ## Collections of Users
 
-Specify a collection of Users by directly specifying them or by specifiying items that will yield a list of users.
+Specify a collection of Users by directly specifying them or by specifying items that will yield a list of users.
 
 <UserTypeEntity> ::=
         (all users|users_ns|users_susp|users_ns_susp)|
@@ -1382,7 +1383,7 @@ gam show projects [[admin] <EmailAddress>] [all|<ProjectIDEntity>]
         [states all|active|deleterequested] [showiampolicies 0|1|3]
 gam print projects [[admin] <EmailAddress>] [all|<ProjectIDEntity>] [todrive <ToDriveAttribute>*]
         [states all|active|deleterequested] [showiampolicies 0|1|3 [onememberperrow]]
-        [delimiter <Character>]] [[formatjson [quotechar <Character>]]
+        [delimiter <Character>] [[formatjson [quotechar <Character>]]
 gam info currentprojectid
 
 gam create|add svcacct [[admin] <EmailAddress>] [<ProjectIDEntity>]
@@ -1460,16 +1461,21 @@ gam <UserTypeEntity> update serviceaccount (scope|scopes <APIScopeURLList>)*
 gam print privileges [todrive <ToDriveAttribute>*]
 gam show privileges
 
+<Privilege> ::= <String>
+<PrivilegeList> ::= "<Privilege>(,<Privilege)*"
 <RoleAssignmentID> ::= <String>
 <RoleItem> ::= id:<String>|uid:<string>|<String>
 
-gam create adminrole <String> privileges all|all_ou|<PrivilegesList> [description <String>]
-gam update adminrole <RoleItem> [name <String>] [privileges all|all_ou|<PrivilegesList>] [description <String>]
+gam create adminrole <String> [description <String>]
+        privileges all|all_ou|<PrivilegesList>|(select <FileSelector>|<CSVFileSelector>)
+gam update adminrole <RoleItem> [name <String>] [description <String>]
+         [privileges all|all_ou|<PrivilegesList>|(select <FileSelector>|<CSVFileSelector>)]
 gam delete adminrole <RoleItem>
 gam info adminrole <RoleItem> [privileges]
 gam print adminroles|roles [todrive <ToDriveAttribute>*]
-        [privileges] [oneitemperrow]
-gam show adminroles|roles [privileges]
+        [role <RoleItem>] [privileges] [oneitemperrow]
+gam show adminroles|roles
+        [role <RoleItem>] [privileges]
 
 gam create|add admin <EmailAddress>|<UniqueID> <RoleItem> customer|(org_unit <OrgUnitItem>)
         [condition securitygroup|nonsecuritygroup]
@@ -1521,17 +1527,6 @@ gam print alias|aliases [todrive <ToDriveAttribute>*]
         (addcsvdata <FieldName> <String>)*
 
 gam whatis <EmailItem> [noinfo] [noinivitablecheck]
-
-# Analytics UA
-
-gam <UserTypeEntity> print analyticuaproperties [todrive <ToDriveAttribute>*]
-        accountid [accounts/]<String>
-        [maxresults <Integer>]
-        [formatjson [quotechar <Character>]]
-gam <UserTypeEntity> show analyticuaproperties
-        accountid [accounts/]<String>
-        [maxresults <Integer>]
-        [formatjson]
 
 # Analytics Admin
 
@@ -1867,7 +1862,7 @@ gam calendar|calendars <CalendarEntity> show events [<EventEntity>] <EventDispla
         [formatjson]
 gam calendar|calendars <CalendarEntity> print events [<EventEntity>] <EventDisplayProperty>*
         [fields <EventFieldNameList>] [showdayofweek]
-        [countsonly]
+        [countsonly [eventrowfilter]]
         [formatjson [quotechar <Character>]] [todrive <ToDriveAttribute>*]
 
 gam calendar <CalendarEntity> addevent <EventAttribute>+ [<EventNotificationAttribute>]
@@ -1881,7 +1876,7 @@ gam calendar <CalendarEntity> moveevent (id|eventid <EventID>)+ destination <Cal
 gam calendar <CalendarEntity> wipe
 gam calendar <CalendarEntity> printevents <EventSelectProperty>* <EventDisplayProperty>*
         [fields <EventFieldNameList>] [showdayofweek]
-        [countsonly]
+        [countsonly [eventrowfilter]]
         [formatjson [quotechar <Character>]] [todrive <ToDriveAttribute>*]
 
 <CalendarSettingsField> ::=
@@ -2401,12 +2396,14 @@ gam <CrOSTypeEntity> update <CrOSAttribute>+ [quickcrosmove [<Boolean>]] [nobatc
         autoupdatethrough|
         backlightinfo|
         bootmode|
+        chromeostype|
         cpuinfo|
         cpustatusreports|
         deprovisionreason|
         devicefiles|
         deviceid|
         devicelicensetype|
+        diskspaceusage|
         diskvolumereports|
         dockmacaddress|
         ethernetmacaddress|
@@ -2414,6 +2411,7 @@ gam <CrOSTypeEntity> update <CrOSAttribute>+ [quickcrosmove [<Boolean>]] [nobatc
         extendedsupporteligible|
         extendedsupportstart|
         extendedsupportenabled|
+        faninfo|
         firmwareversion|
         firstenrollmenttime|
         lastdeprovisiontimestamp|
@@ -3550,19 +3548,6 @@ gam print contacts [todrive <ToDriveAttribute>*] <ContactSelection>
         [fields <ContactFieldNameList>]
         [formatjson [quotechar <Character>]]
 
-vgam info gal <ContactEntity>
-        [basic|full]
-        [fields <ContactFieldNameList>]
-        [formatjson]
-gam show gal <ContactSelection>
-        [basic|full] [orderby <ContactOrderByFieldName> [ascending|descending]]
-        [fields <ContactFieldNameList>]
-        [formatjson]
-gam print gal [todrive <ToDriveAttribute>*] <ContactSelection>
-        [basic|full] [orderby <ContactOrderByFieldName> [ascending|descending]]
-        [fields <ContactFieldNameList>]
-        [formatjson [quotechar <Character>]]
-
 # Domain - People Contacts and Profiles
 
 <PeopleSourceName> ::=
@@ -4134,7 +4119,7 @@ gam print devices [todrive <ToDriveAttribute>*]
         <DeviceFieldName>* [fields <DeviceFieldNameList>] [userfields <DeviceUserFieldNameList>]
         [orderby <DeviceOrderByFieldName> [ascending|descending]]
         [all|company|personal|nocompanydevices|nopersonaldevices]
-        [nodeviceusers]
+        [nodeviceusers|oneuserperrow]
         [formatjson [quotechar <Character>]]
         [showitemcountonly]
 
@@ -4458,6 +4443,7 @@ gam report usage customer [todrive <ToDriveAttribute>*]
         domain|
         drive|doc|docs|
         gcp|
+        gemini|geminiforworkspace|
         groups|group|
         groupsenterprise|enterprisegroups|
         jamboard|
@@ -4833,6 +4819,17 @@ gam show shareddrives
         [fields <SharedDriveFieldNameList>] [noorgunits [<Boolean>]]
         [formatjson] [noorgunits [<Boolean>]]
 
+gam print shareddriveorganizers [todrive <ToDriveAttribute>*]
+        [(shareddriveadminquery|query <QuerySharedDrive>) |
+         (shareddrives|teamdrives (<SharedDriveIDList>|(select <FileSelector>|<CSVFileSelector>)))]
+        [orgunit|org|ou <OrgUnitPath>]
+        [matchname <REMatchPattern>]
+        [domainlist <DomainList>]
+        [includetypes <OrganizerTypeList>]
+        [oneorganizer [<Boolean>]]
+        [shownorganizerdrives [false|true|only]]
+        [includefileorganizers [<Boolean>]]
+        [delimiter <Character>]
 gam print oushareddrives [todrive <ToDriveAttribute>*]
         [ou|org|orgunit <OrgUnitPath>]
         [formatjson [quotechar <Character>]]
@@ -5257,7 +5254,10 @@ gam show vaultmatters|matters [matterstate <MatterStateList>]
 
 gam print vaultcounts [todrive <ToDriveAttributes>*]
         matter <MatterItem> corpus mail|groups
-        (accounts <EmailAddressEntity>) | (orgunit|org|ou <OrgUnitPath>) | everyone
+        [(accounts <EmailAddressEntity>) | (orgunit|org|ou <OrgUnitPath>) | everyone]
+        [(shareddrives|teamdrives (<SharedDriveIDList>|(select <FileSelector>|<CSVFileSelector>))) |
+            (rooms (<ChatSpaceList>|(select <FileSelector>|<CSVFileSelector>))) |
+            (sitesurl (<URLList>||(select <FileSelector>|<CSVFileSelector>)))]
         [scope [all_data|held_data|unprocessed_data]]
         [terms <String>] [start|starttime <Date>|<Time>] [end|endtime <Date>|<Time>] [timezone <TimeZone>]
         [excludedrafts <Boolean>]
@@ -5267,12 +5267,15 @@ gam print vaultcounts [todrive <ToDriveAttributes>*]
 
 gam create vaultexport|export matter <MatterItem> [name <String>] corpus calendar|drive|gemini|groups|hangouts_chat|mail|voice
         (accounts <EmailAddressEntity>) | (orgunit|org|ou <OrgUnitPath>) | everyone
-        (shareddrives|teamdrives <SharedDriveIDList>) | (rooms <RoomList>) | (sitesurl <URLList>)
+        (shareddrives|teamdrives (<SharedDriveIDList>|(select <FileSelector>|<CSVFileSelector>))) |
+            (rooms (<ChatSpaceList>|(select <FileSelector>|<CSVFileSelector>))) |
+            (sitesurl (<URLList>||(select <FileSelector>|<CSVFileSelector>)))
         [scope all_data|held_data|unprocessed_data]
         [terms <String>] [start|starttime <Date>|<Time>] [end|endtime <Date>|<Time>] [timezone <TimeZone>]
         [locationquery <StringList>] [peoplequery <StringList>] [minuswords <StringList>]
         [responsestatuses <AttendeeStatus>(,<AttendeeStatus>)*] [calendarversiondate <Date>|<Time>]
-        [includeshareddrives <Boolean>] [driveversiondate <Date>|<Time>] [includeaccessinfo <Boolean>]
+        [(includeshareddrives <Boolean>)|(shareddrivesoption included|included_if_account_is_not_a_member|not_included)]
+        [driveversiondate <Date>|<Time>] [includeaccessinfo <Boolean>]
         [driveclientsideencryption any|encrypted|unencrypted]
         [includerooms <Boolean>]
         [excludedrafts <Boolean>] [mailclientsideencryption any|encrypted|unencrypted]
@@ -5338,14 +5341,14 @@ gam create vaulthold|hold matter <MatterItem> [name <String>] corpus calendar|dr
         [query <QueryVaultCorpus>]
         [terms <String>] [start|starttime <Date>|<Time>] [end|endtime <Date>|<Time>]
         [includerooms <Boolean>] [covereddata calllogs|textmessages|voicemails]
-        [includeshareddrives|includeteamdrives <Boolean>]
+        [includeshareddrives <Boolean>]
         [showdetails|returnidonly]
 gam update vaulthold|hold <HoldItem> matter <MatterItem>
         [([addaccounts|addgroups|addusers <EmailItemList>] [removeaccounts|removegroups|removeusers <EmailItemList>]) | (orgunit|org|ou <OrgUnit>)]
         [query <QueryVaultCorpus>]
         [terms <String>] [start|starttime <Date>|<Time>] [end|endtime <Date>|<Time>]
         [includerooms <Boolean>] [covereddata calllogs|textmessages|voicemails]
-        [includeshareddrives|includeteamdrives <Boolean>]
+        [includeshareddrives <Boolean>]
         [showdetails]
 gam delete vaulthold|hold <HoldItem> matter <MatterItem>
 gam delete vaulthold|hold <MatterItem> <HoldItem>
@@ -6111,7 +6114,7 @@ gam <UserTypeEntity> show events <UserCalendarEntity> [<EventEntity>] <EventDisp
         [formatjson]
 gam <UserTypeEntity> print events <UserCalendarEntity> [<EventEntity>] <EventDisplayProperty>*
         [fields <EventFieldNameList>] [showdayofweek]
-        [countsonly]
+        [countsonly [eventrowfilter]]
         [formatjson [quotechar <Character>]] [todrive <ToDriveAttribute>*]
 
 gam <UserTypeEntity> update calattendees <UserCalendarEntity> <EventEntity> [anyorganizer]
@@ -8334,6 +8337,19 @@ gam <UserTypeEntity> show shareddrives
         [fields <SharedDriveFieldNameList>] [noorgunits [<Boolean>]]
         [formatjson]
 
+gam <UserTypeEntity> print shareddriveorganizers [todrive <ToDriveAttribute>*]
+        [adminaccess|asadmin]
+        [(shareddriveadminquery|query <QuerySharedDrive>) |
+         (shareddrives|teamdrives (<SharedDriveIDList>|(select <FileSelector>|<CSVFileSelector>)))]
+        [orgunit|org|ou <OrgUnitPath>]
+        [matchname <REMatchPattern>]
+        [domainlist <DomainList>]
+        [includetypes <OrganizerTypeList>]
+        [oneorganizer [<Boolean>]]
+        [shownorganizerdrives [false|true|only]]
+        [includefileorganizers [<Boolean>]]
+        [delimiter <Character>]
+	
 # Users - Force Signout and Turn Off 2-Step Verification
 
 gam <UserTypeEntity> signout

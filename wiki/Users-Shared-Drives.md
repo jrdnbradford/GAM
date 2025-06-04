@@ -11,6 +11,8 @@
   - [Delete a Shared Drive](#delete-a-shared-drive)
   - [Change Shared Drive visibility](#change-shared-drive-visibility)
 - [Display Shared Drives](#display-shared-drives)
+- [Display Shared Drive Counts](#display-shared-drive-counts)
+- [Display Shared Drive Organizers](#display-shared-drive-organizers)
 - [Manage Shared Drive access](#manage-shared-drive-access)
 - [Display Shared Drive access](#display-shared-drive-access)
   - [Display Shared Drive access for specific Shared Drives](#display-shared-drive-access-for-specific-shared-drives)
@@ -70,6 +72,9 @@
 ```
 ```
 <JSONData> ::= (json [charset <Charset>] <String>) | (json file <FileName> [charset <Charset>]) |
+
+<OrganizerType> ::= user|group
+<OrganizerTypeList> ::= "<OrganizerType>(,<OrganizerType>)*"
 
 <OrgUnitID> ::= id:<String>
 <OrgUnitPath> ::= /|(/<String>)+
@@ -199,14 +204,14 @@ sharingfoldersrequiresorganizerpermission true
 
 ## Display Shared Drive themes
 ```
-gam <UserTypeEntity> show teamdrivethemes
+gam <UserTypeEntity> show shareddrivethemes
 ```
 ## Manage Shared Drives
 
 ## Create a Shared Drive
 The user that creates a Shared Drive is given the permission role organizer for the Shared Drive,
 ```
-gam <UserTypeEntity> create teamdrive <Name>
+gam <UserTypeEntity> create shareddrive <Name>
         [(theme|themeid <String>)|
          ([customtheme <DriveFileID> <Float> <Float> <Float>] [color <ColorValue>])]
         (<SharedDriveRestrictionsSubfieldName> <Boolean>)*
@@ -214,7 +219,7 @@ gam <UserTypeEntity> create teamdrive <Name>
         [errorretries <Integer>] [updateinitialdelay <Integer>] [updateretrydelay <Integer>]
         [(csv [todrive <ToDriveAttribute>*] (addcsvdata <FieldName> <String>)*) | returnidonly]
 ```
-* `themeid` - a Shared Drive themeId obtained from `show teamdrivethemes`
+* `themeid` - a Shared Drive themeId obtained from `show shareddrivethemes`
 * `customtheme` - set the backgroundImageFile property described here:  https://developers.google.com/drive/v3/reference/teamdrives
   * `<Float>` - X coordinate, typically 0.0
   * `<Float>` - Y coordinate, typically 0.0
@@ -247,9 +252,9 @@ When either of these options is chosen, no infomation about Shared Drive restric
 To retrieve the Shared Drive ID with `returnidonly`:
 ```
 Linux/MacOS
-teamDriveId=$(gam user user@domain.com create teamdrive ... returnidonly)
+teamDriveId=$(gam user user@domain.com create shareddrive ... returnidonly)
 Windows PowerShell
-$teamDriveId = & gam user user@domain.com create teamdrive ... returnidonly
+$teamDriveId = & gam user user@domain.com create shareddrive ... returnidonly
 ```
 
 ## Bulk Create Shared Drives
@@ -259,7 +264,7 @@ As a newly created Drive can't be updated for 30+ seconds; split the operation i
 
 Make a CSV file SharedDriveNames.csv with at least two columns, User and name.
 ```
-gam redirect csv ./SharedDrivesCreated.csv multiprocess csv SharedDriveNames.csv gam user "~User" create teamdrive "~name" csv
+gam redirect csv ./SharedDrivesCreated.csv multiprocess csv SharedDriveNames.csv gam user "~User" create shareddrive "~name" csv
 ```
 This will create a three column CSV file SharedDriveNamesIDs.csv with columns: User,name,id
 * There will be a row for each Shared Drive.
@@ -273,13 +278,13 @@ gam redirect stdout ./SharedDrivesUpdated.txt multiprocess redirect stderr stdou
 
 This command is used to set basic Shared Drive settings.
 ```
-gam <UserTypeEntity> update teamdrive <SharedDriveEntity> [adminaccess|asadmin] [name <Name>]
+gam <UserTypeEntity> update shareddrive <SharedDriveEntity> [adminaccess|asadmin] [name <Name>]
         [(theme|themeid <String>)|
          ([customtheme <DriveFileID> <Float> <Float> <Float>] [color <ColorValue>])]
         (<SharedDriveRestrictionsSubfieldName> <Boolean>)*
         [hide|hidden <Boolean>] [ou|org|orgunit <OrgUnitItem>]
 ```
-* `themeid` - a Shared Drive themeId obtained from `show teamdrivethemes`
+* `themeid` - a Shared Drive themeId obtained from `show shareddrivethemes`
 * `customtheme` - set the backgroundImageFile property described here:  https://developers.google.com/drive/v3/reference/teamdrives
 * `color` - set the Shared Drive color
 * `<SharedDriveRestrictionsSubfieldName> <Boolean>` - Set Shared Drive Restrictions
@@ -290,7 +295,7 @@ This option is only available when the command is run as an administrator.
 
 ## Delete a Shared Drive
 ```
-gam <UserTypeEntity> delete teamdrive <SharedDriveEntity> [allowitemdeletion] [adminaccess|asadmin]
+gam <UserTypeEntity> delete shareddrive <SharedDriveEntity> [allowitemdeletion] [adminaccess|asadmin]
 ```
 By default, deleting a Shared Drive that contains any files/folders will fail.
 The `allowitemdeletion` option allows a Super Admin to delete a non-empty Shared Drive.
@@ -298,19 +303,19 @@ This is not reversible, proceed with caution.
 
 ## Change Shared Drive visibility
 ```
-gam <UserTypeEntity> hide teamdrive <SharedDriveEntity>
-gam <UserTypeEntity> unhide teamdrive <SharedDriveEntity>
+gam <UserTypeEntity> hide shareddrive <SharedDriveEntity>
+gam <UserTypeEntity> unhide shareddrive <SharedDriveEntity>
 ```
 ## Display Shared Drives
 ```
-gam <UserTypeEntity> show teamdriveinfo <SharedDriveEntity>
-gam <UserTypeEntity> info teamdrive <SharedDriveEntity>
+gam <UserTypeEntity> show shareddriveinfo <SharedDriveEntity>
+gam <UserTypeEntity> info shareddrive <SharedDriveEntity>
         [fields <SharedDriveFieldNameList>]
         [guiroles [<Boolean>] [formatjson]
-gam <UserTypeEntity> show teamdriveinfo <SharedDriveEntity>
+gam <UserTypeEntity> show shareddriveinfo <SharedDriveEntity>
         [fields <SharedDriveFieldNameList>]
         [guiroles [<Boolean>] [formatjson]
-gam <UserTypeEntity> show teamdrives
+gam <UserTypeEntity> show shareddrives
         [matchname <REMatchPattern>] (role|roles <SharedDriveACLRoleList>)*
         [fields <SharedDriveFieldNameList>]
         [guiroles [<Boolean>] [formatjson]
@@ -322,7 +327,7 @@ By default, Gam displays all Teams Drives accessible by the user.
 By default, Gam displays the information as an indented list of keys and values.
 * `formatjson` - Display the fields in JSON format.
 ```
-gam <UserTypeEntity> print teamdrives [todrive <ToDriveAttribute>*]
+gam <UserTypeEntity> print shareddrives [todrive <ToDriveAttribute>*]
         [matchname <REMatchPattern>] (role|roles <SharedDriveACLRoleList>)*
         [fields <SharedDriveFieldNameList>] [formatjson [quotechar <Character>]]
 ```
@@ -355,6 +360,80 @@ the quote character itself, the column delimiter (comma by default) and new-line
 When using the `formatjson` option, double quotes are used extensively in the data resulting in hard to read/process output.
 The `quotechar <Character>` option allows you to choose an alternate quote character, single quote for instance, that makes for readable/processable output.
 `quotechar` defaults to `gam.cfg/csv_output_quote_char`. When uploading CSV files to Google, double quote `"` should be used.
+
+## Display Shared Drive Counts
+Display the number of Shared Drives.
+```
+gam <UserTypeEntity> show|print shareddrives
+        [teamdriveadminquery|query <QueryTeamDrive>]
+        [matchname <REMatchPattern>] [orgunit|org|ou <OrgUnitPath>]
+        showitemcountonly
+```
+By default, all Shared Drives are counted; use the following options to select a subset of Shared Drives:
+* `teamdriveadminquery|query <QueryTeamDrive>` - Use a query to select Shared Drives
+* `matchname <REMatchPattern>` - Retrieve Shared Drives with names that match a pattern.
+* `orgunit|org|ou <OrgUnitPath>` - Only Shared Drives in the specified Org Unit are selected
+
+Example
+```
+$ gam user user@domain.com print shareddrives showitemcountonly                 
+Getting all Shared Drives for user@domain.com 
+Got 4 Shared Drives for user@domain.com ...
+4
+```
+The `Getting` and `Got` messages are written to stderr, the count is writtem to stdout.
+
+To retrieve the count with `showitemcountonly`:
+```
+Linux/MacOS
+count=$(gam user user@domain.com print shareddrives showitemcountonly)
+Windows PowerShell
+count = & gam user user@domain.com print shareddrives showitemcountonly
+```
+## Display Shared Drive Organizers
+The following command can be used instead of the `GetTeamDriveOrganizers.py` script.
+
+```
+gam <UserTypeEntity> print shareddriveorganizers [todrive <ToDriveAttribute>*]
+        [adminaccess|asadmin]
+        [(shareddriveadminquery|query <QuerySharedDrive>) |
+         (shareddrives|teamdrives (<SharedDriveIDList>|(select <FileSelector>|<CSVFileSelector>)))]
+        [orgunit|org|ou <OrgUnitPath>]
+        [matchname <REMatchPattern>]
+        [domainlist <DomainList>]
+        [includetypes <OrganizerTypeList>]
+        [oneorganizer [<Boolean>]]
+        [shownorganizerdrives [false|true|only]]
+        [includefileorganizers [<Boolean>]]
+        [delimiter <Character>]
+```
+Options `shareddriveadminquery|query` and `shareddrives|teamdrives` are mutually exclusive.
+
+Options `shareddriveadminquery|query` and `orgunit|org|ou` require `adminaccess|asadmin`.
+
+By default, organizers for all Shared Drives are displayed; use the following options to select a subset of Shared Drives:
+* `teamdriveadminquery|query <QueryTeamDrive>` - Use a query to select Shared Drives
+* `shareddrives|teamdrives <SharedDriveIDList>` - Select the Shared Drive IDs specified in `<SharedDriveIDList>`
+* `shareddrives|teamdrives select <FileSelector>|<CSVFileSelector>` - Select the Shared Drive IDs specified in `<FileSelector>|<CSVFileSelector>`
+* `orgunit|org|ou <OrgUnitPath>` - Only Shared Drives in the specified Org Unit are selected
+* `matchname <REMatchPattern>` - Retrieve Shared Drives with names that match a pattern.
+
+For multiple organizers:
+* `delimiter <Character>` - Separate `organizers` entries with `<Character>`; the default value is `csv_output_field_delimiter` from `gam.cfg`.
+
+The command defaults do not match the script defaults, they are set for the most common use case:
+* `domainlist` - The workspace primary domain
+* `includetypes` - user
+* `oneorganizer` - True
+* `shownoorganizerdrives` - True
+* `includefileorganizers` - False
+
+To select organizers from any domain, use: `domainlist ""`
+
+For example, to get a single user organizer from your domain for all Shared Drives including no organizer drives:
+```
+gam redirect csv ./TeamDriveOrganizers.csv print shareddriveorganizers
+```
 
 ## Manage Shared Drive access
 These commands must be issued by a user with Shared Drive permission role organizer.
@@ -428,14 +507,14 @@ The `quotechar <Character>` option allows you to choose an alternate quote chara
 
 ## Display Shared Drive access for selected Shared Drives
 ```
-gam <UserTypeEntity> show teamdriveacls
+gam <UserTypeEntity> show shareddriveacls
         adminaccess [teamdriveadminquery|query <QueryTeamDrive>]
         [matchname <REMatchPattern>] [orgunit|org|ou <OrgUnitPath>]
         [user|group <EmailAddress> [checkgroups]] (role|roles <SharedDriveACLRoleList>)*
         <PermissionMatch>* [<PermissionMatchAction>] [pmselect]
         [oneitemperrow] [<DrivePermissionsFieldName>*|(fields <DrivePermissionsFieldNameList>)]
         [formatjson [quotechar <Character>]]
-gam <UserTypeEntity> print teamdriveacls [todrive <ToDriveAttribute>*]
+gam <UserTypeEntity> print shareddriveacls [todrive <ToDriveAttribute>*]
         adminaccess [teamdriveadminquery|query <QueryTeamDrive>]
 	[matchname <REMatchPattern>] [orgunit|org|ou <OrgUnitPath>]
         [user|group <EmailAddress> [checkgroups]] (role|roles <SharedDriveACLRoleList>)*
@@ -458,7 +537,7 @@ By default, all ACLS are displayed; use the following options to select a subset
 * `role|roles <SharedDriveACLRoleList>` - Display ACLs for the specified roles only.
 * `<PermissionMatch>* [<PermissionMatchAction>]` - Use permission matching to display a subset of the ACLs for each Shared Drive; this only applies when `pmselect` is not specified
 
-With `print teamdriveacls` or `show teamdrivecls formatjson`, the ACLs selected for display are all output on one row/line as a repeating item with the matching Shared Drive id.
+With `print shareddriveacls` or `show shareddrivecls formatjson`, the ACLs selected for display are all output on one row/line as a repeating item with the matching Shared Drive id.
 When `oneitemperrow` is specified, each ACL is output on a separate row/line with the matching Shared Drive id and name. This simplifies processing the CSV file with subsequent Gam commands.
 
 By default, when writing CSV files, Gam uses a quote character of double quote `"`. The quote character is used to enclose columns that contain

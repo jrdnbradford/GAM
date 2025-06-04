@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Copyright (C) 2024 Ross Scroggs All Rights Reserved.
+# Copyright (C) 2025 Ross Scroggs All Rights Reserved.
 #
 # All Rights Reserved.
 #
@@ -22,7 +22,6 @@
 # APIs
 ACCESSCONTEXTMANAGER = 'accesscontextmanager'
 ALERTCENTER = 'alertcenter'
-ANALYTICS = 'analytics'
 ANALYTICS_ADMIN = 'analyticsadmin'
 CALENDAR = 'calendar'
 CBCM = 'cbcm'
@@ -119,6 +118,7 @@ JWT_APIS = {
   ACCESSCONTEXTMANAGER: [CLOUD_PLATFORM_SCOPE],
   CHAT: ['https://www.googleapis.com/auth/chat.bot'],
   CLOUDRESOURCEMANAGER: [CLOUD_PLATFORM_SCOPE],
+  IAM: [IAM_SCOPE],
   ORGPOLICY: [CLOUD_PLATFORM_SCOPE],
   }
 #
@@ -131,6 +131,8 @@ SCOPELESS_APIS = {
 APIS_NEEDING_ACCESS_TOKEN = {
   CBCM: ['https://www.googleapis.com/auth/admin.directory.device.chromebrowsers']
   }
+#
+FORCE_OFF_SA_SCOPES = {IAM}
 #
 REFRESH_PERM_ERRORS = [
   'invalid_grant: reauth related error (rapt_required)', # no way to reauth today
@@ -162,7 +164,6 @@ PROJECT_APIS = [
   'accesscontextmanager.googleapis.com',
   'admin.googleapis.com',
   'alertcenter.googleapis.com',
-  'analytics.googleapis.com',
   'analyticsadmin.googleapis.com',
 #  'audit.googleapis.com',
   'calendar-json.googleapis.com',
@@ -201,7 +202,6 @@ PROJECT_APIS = [
 _INFO = {
   ACCESSCONTEXTMANAGER: {'name': 'Access Context Manager API', 'version': 'v1', 'v2discovery': True},
   ALERTCENTER: {'name': 'AlertCenter API', 'version': 'v1beta1', 'v2discovery': True},
-  ANALYTICS: {'name': 'Analytics API', 'version': 'v3', 'v2discovery': False},
   ANALYTICS_ADMIN: {'name': 'Analytics Admin API', 'version': 'v1beta', 'v2discovery': True},
   CALENDAR: {'name': 'Calendar API', 'version': 'v3', 'v2discovery': True, 'mappedAPI': 'calendar-json'},
   CBCM: {'name': 'Chrome Browser Cloud Management API', 'version': 'v1.1beta1', 'v2discovery': True, 'localjson': True},
@@ -244,7 +244,7 @@ _INFO = {
   EMAIL_AUDIT: {'name': 'Email Audit API', 'version': 'v1', 'v2discovery': False},
   FORMS: {'name': 'Forms API', 'version': 'v1', 'v2discovery': True},
   GMAIL: {'name': 'Gmail API', 'version': 'v1', 'v2discovery': True},
-  GROUPSMIGRATION: {'name': 'Groups Migration API', 'version': 'v1', 'v2discovery': False},
+  GROUPSMIGRATION: {'name': 'Groups Migration API', 'version': 'v1', 'v2discovery': True},
   GROUPSSETTINGS: {'name': 'Groups Settings API', 'version': 'v1', 'v2discovery': True},
   IAM: {'name': 'Identity and Access Management API', 'version': 'v1', 'v2discovery': True},
   IAM_CREDENTIALS: {'name': 'Identity and Access Management Credentials API', 'version': 'v1', 'v2discovery': True},
@@ -532,10 +532,6 @@ _SVCACCT_SCOPES = [
    'api': ALERTCENTER,
    'subscopes': [],
    'scope': 'https://www.googleapis.com/auth/apps.alerts'},
-  {'name': 'Analytics API - read only',
-   'api': ANALYTICS,
-   'subscopes': [],
-   'scope': 'https://www.googleapis.com/auth/analytics.readonly'},
   {'name': 'Analytics Admin API - read only',
    'api': ANALYTICS_ADMIN,
    'subscopes': [],
@@ -603,7 +599,7 @@ _SVCACCT_SCOPES = [
   {'name': 'Cloud Identity Devices API',
    'api': CLOUDIDENTITY_DEVICES,
    'subscopes': READONLY,
-   'scope': 'https://www.googleapis.com/auth/cloud-identity'},
+   'scope': 'https://www.googleapis.com/auth/cloud-identity.devices'},
 #  {'name': 'Cloud Identity User Invitations API',
 #   'api': CLOUDIDENTITY_USERINVITATIONS,
 #   'subscopes': READONLY,
@@ -652,10 +648,11 @@ _SVCACCT_SCOPES = [
    'api': GMAIL,
    'subscopes': [],
    'scope': 'https://www.googleapis.com/auth/gmail.settings.sharing'},
-  {'name': 'Identity and Access Management API',
-   'api': IAM,
-   'subscopes': [],
-   'scope': CLOUD_PLATFORM_SCOPE},
+#  {'name': 'Identity and Access Management API',
+#   'api': IAM,
+#   'offByDefault': True,
+#   'subscopes': [],
+#   'scope': IAM_SCOPE},
   {'name': 'Keep API',
    'api': KEEP,
    'subscopes': READONLY,

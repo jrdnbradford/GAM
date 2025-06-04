@@ -3,7 +3,7 @@
 #
 # GAM7
 #
-# Copyright 2024, All Rights Reserved.
+# Copyright 2025, All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@ https://github.com/GAM-team/GAM/wiki
 """
 
 __author__ = 'GAM Team <google-apps-manager@googlegroups.com>'
-__version__ = '7.06.02'
+__version__ = '7.08.03'
 __license__ = 'Apache License 2.0 (http://www.apache.org/licenses/LICENSE-2.0)'
 
 #pylint: disable=wrong-import-position
@@ -95,6 +95,8 @@ import wsgiref.simple_server
 import wsgiref.util
 import zipfile
 
+# disable legacy stuff we don't use and isn't secure
+os.environ['CRYPTOGRAPHY_OPENSSL_NO_LEGACY'] = "1"
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
@@ -4783,8 +4785,9 @@ def defaultSvcAcctScopes():
   scopesList = API.getSvcAcctScopesList(GC.Values[GC.USER_SERVICE_ACCOUNT_ACCESS_ONLY], False)
   saScopes = {}
   for scope in scopesList:
-    saScopes.setdefault(scope['api'], [])
-    saScopes[scope['api']].append(scope['scope'])
+    if not scope.get('offByDefault'):
+      saScopes.setdefault(scope['api'], [])
+      saScopes[scope['api']].append(scope['scope'])
   saScopes[API.DRIVEACTIVITY].append(API.DRIVE_SCOPE)
   saScopes[API.DRIVE2] = saScopes[API.DRIVE3]
   saScopes[API.DRIVETD] = saScopes[API.DRIVE3]
@@ -5653,8 +5656,8 @@ def getGDataUserCredentials(api, user, i, count):
     handleOAuthTokenError(e, True, True, i, count)
     return (userEmail, None)
 
-def getContactsObject(contactFeed):
-  contactsObject = initGDataObject(gdata.apps.contacts.service.ContactsService(contactFeed=contactFeed),
+def getContactsObject():
+  contactsObject = initGDataObject(gdata.apps.contacts.service.ContactsService(contactFeed=True),
                                    API.CONTACTS)
   return (GC.Values[GC.DOMAIN], contactsObject)
 
@@ -5979,7 +5982,7 @@ def getCIGroupMemberRoleFixType(member):
     else:
       member['type'] = Ent.TYPE_OTHER
   roles = {}
-  memberRoles = member.get('roles', [{'name': Ent.MEMBER}])
+  memberRoles = member.get('roles', [{'name': Ent.ROLE_MEMBER}])
   for role in memberRoles:
     roles[role['name']] = role
   for a_role in [Ent.ROLE_OWNER, Ent.ROLE_MANAGER, Ent.ROLE_MEMBER]:
@@ -6017,7 +6020,7 @@ def getCIGroupTransitiveMemberRoleFixType(groupName, tmember):
         trole['name'] = Ent.ROLE_MANAGER
       memberRoles.append(trole)
   else:
-    memberRoles = [{'name': Ent.MEMBER}]
+    memberRoles = [{'name': Ent.ROLE_MEMBER}]
   roles = {}
   for role in memberRoles:
     roles[role['name']] = role
@@ -8563,7 +8566,7 @@ class CSVPrintFile():
     if not self.JSONtitlesSet:
       systemErrorExit(USAGE_ERROR_RC, Msg.NO_COLUMNS_SELECTED_WITH_CSV_OUTPUT_HEADER_FILTER.format(GC.CSV_OUTPUT_HEADER_FILTER, GC.CSV_OUTPUT_HEADER_DROP_FILTER))
 
-  def writeCSVfile(self, list_type):
+  def writeCSVfile(self, list_type, clearRowFilters=False):
 
     def todriveCSVErrorExit(entityValueList, errMsg):
       systemErrorExit(ACTION_FAILED_RC, formatKeyValueList(Ind.Spaces(),
@@ -8583,13 +8586,16 @@ class CSVPrintFile():
 
     def writeCSVData(writer):
       try:
-        if GM.Globals[GM.CSVFILE][GM.REDIRECT_WRITE_HEADER]:
-          writer.writerow(dict((item, item) for item in writer.fieldnames))
-        if not self.sortHeaders:
-          writer.writerows(self.rows)
+        if not self.outputTranspose:
+          if GM.Globals[GM.CSVFILE][GM.REDIRECT_WRITE_HEADER]:
+            writer.writerow(dict((item, item) for item in writer.fieldnames))
+          if not self.sortHeaders:
+            writer.writerows(self.rows)
+          else:
+            for row in sorted(self.rows, key=itemgetter(*self.sortHeaders)):
+              writer.writerow(row)
         else:
-          for row in sorted(self.rows, key=itemgetter(*self.sortHeaders)):
-            writer.writerow(row)
+          writer.writerows(self.rows)
         return True
       except IOError as e:
         stderrErrorMsg(e)
@@ -8951,11 +8957,13 @@ class CSVPrintFile():
                                                       self.oneItemPerRow,
                                                       self.showPermissionsLast,
                                                       self.zeroBlankMimeTypeCounts)))
+      if clearRowFilters:
+        GM.Globals[GM.CSVFILE][GM.REDIRECT_QUEUE].put((GM.REDIRECT_QUEUE_CLEAR_ROW_FILTERS, clearRowFilters))
       GM.Globals[GM.CSVFILE][GM.REDIRECT_QUEUE].put((GM.REDIRECT_QUEUE_DATA, self.rows))
       return
     if self.zeroBlankMimeTypeCounts:
       self.ZeroBlankMimeTypeCounts()
-    if self.rowFilter or self.rowDropFilter:
+    if not clearRowFilters and (self.rowFilter or self.rowDropFilter):
       self.CheckOutputRowFilterHeaders()
     if self.headerFilter or self.headerDropFilter:
       if not self.formatJSON:
@@ -9006,17 +9014,13 @@ class CSVPrintFile():
     normalizeSortHeaders()
     if self.outputTranspose:
       newRows = []
-      pivotKey = titlesList[0]
-      newTitlesList = [pivotKey]
-      newTitlesSet = set(newTitlesList)
-      for title in titlesList[1:]:
-        newRow = {pivotKey: title}
+      newTitlesList = [i for i in range(len(self.rows)+1)]
+      for title in titlesList:
+        i = 0
+        newRow = {i: title}
         for row in self.rows:
-          pivotValue = row[pivotKey]
-          if pivotValue not in newTitlesSet:
-            newTitlesSet.add(pivotValue)
-            newTitlesList.append(pivotValue)
-          newRow[pivotValue] = row.get(title)
+          i += 1
+          newRow[i] = row.get(title)
         newRows.append(newRow)
       titlesList = newTitlesList
       self.rows = newRows
@@ -9358,32 +9362,9 @@ def getOSPlatform():
 
 # gam checkconnection
 def doCheckConnection():
-  hosts = ['api.github.com',
-           'raw.githubusercontent.com',
-           'accounts.google.com',
-           'workspace.google.com',
-           'oauth2.googleapis.com',
-           'www.googleapis.com']
-  fix_hosts = {'calendar-json.googleapis.com': 'www.googleapis.com',
-               'storage-api.googleapis.com': 'storage.googleapis.com'}
-  api_hosts = ['apps-apis.google.com',
-               'sites.google.com',
-               'versionhistory.googleapis.com',
-               'www.google.com']
-  for host in API.PROJECT_APIS:
-    host = fix_hosts.get(host, host)
-    if host not in api_hosts and host not in hosts:
-      api_hosts.append(host)
-  hosts.extend(sorted(api_hosts))
-  host_count = len(hosts)
-  httpObj = getHttpObj(timeout=30)
-  httpObj.follow_redirects = False
-  headers = {'user-agent': GAM_USER_AGENT}
-  okay = createGreenText('OK')
-  not_okay = createRedText('ERROR')
-  try_count = 0
-  success_count = 0
-  for host in hosts:
+
+  def check_host(host):
+    nonlocal try_count, okay, not_okay, success_count
     try_count += 1
     dns_err = None
     ip = 'unknown'
@@ -9393,12 +9374,12 @@ def doCheckConnection():
       dns_err = f'{not_okay}\n   DNS failure: {str(e)}\n'
     except Exception as e:
       dns_err = f'{not_okay}\n   Unknown DNS failure: {str(e)}\n'
-    check_line = f'Checking {host} ({ip}) ({try_count}/{host_count})...'
+    check_line = f'Checking {host} ({ip}) ({try_count})...'
     writeStdout(f'{check_line:<100}')
     flushStdout()
     if dns_err:
       writeStdout(dns_err)
-      continue
+      return
     gen_firewall = 'You probably have security software or a firewall on your machine or network that is preventing GAM from making Internet connections. Check your network configuration or try running GAM on a hotspot or home network to see if the problem exists only on your organization\'s network.'
     try:
       if host.startswith('http'):
@@ -9427,7 +9408,54 @@ def doCheckConnection():
       writeStdout(f'{not_okay}\n    Timed out trying to connect to host\n')
     except Exception as e:
       writeStdout(f'{not_okay}\n    {str(e)}\n')
-  if success_count == host_count:
+
+  try_count = 0
+  httpObj = getHttpObj(timeout=30)
+  httpObj.follow_redirects = False
+  headers = {'user-agent': GAM_USER_AGENT}
+  okay = createGreenText('OK')
+  not_okay = createRedText('ERROR')
+  success_count = 0
+  initial_hosts = ['api.github.com',
+           'raw.githubusercontent.com',
+           'accounts.google.com',
+           'oauth2.googleapis.com',
+           'www.googleapis.com']
+  for host in initial_hosts:
+    check_host(host)
+  api_hosts = ['apps-apis.google.com',
+               'www.google.com']
+  for host in api_hosts:
+    check_host(host)
+  # For v2 discovery APIs, GAM gets discovery file from <api>.googleapis.com so
+  # add those domains.
+  disc_hosts = []
+  for api, config in API._INFO.items():
+    if config.get('v2discovery') and not config.get('localdiscovery'):
+      if mapped_api := config.get('mappedAPI'):
+        api = mapped_api
+      host = f'{api}.googleapis.com'
+      if host not in disc_hosts:
+        disc_hosts.append(host)
+  for host in disc_hosts:
+    check_host(host)
+  checked_hosts = initial_hosts + api_hosts + disc_hosts
+  # now we need to "build" each API and check it's base URL host
+  # if we haven't already. This may not be any hosts at all but
+  # to ensure we are checking all hosts GAM may use we should
+  # keep this.
+  for api in API._INFO:
+    if api in [API.CONTACTS, API.EMAIL_AUDIT]:
+      continue
+    svc = getService(api, httpObj)
+    base_url = svc._rootDesc.get('baseUrl')
+    parsed_base_url = urlparse(base_url)
+    base_host = parsed_base_url.netloc
+    if base_host not in checked_hosts:
+      writeStdout(f'Checking {base_host} for {api}\n')
+      check_host(base_host)
+      checked_hosts.append(base_host)
+  if success_count == try_count:
     writeStdout(createGreenText('All hosts passed!\n'))
   else:
     systemErrorExit(3, createYellowText('Some hosts failed to connect! Please follow the recommendations for those hosts to correct any issues and try again.'))
@@ -9557,6 +9585,7 @@ def CSVFileQueueHandler(mpQueue, mpQueueStdout, mpQueueStderr, csvPF, datetimeNo
   GM.Globals[GM.DATETIME_NOW] = datetimeNow
   GC.Values[GC.TIMEZONE] = tzinfo
   GC.Values[GC.OUTPUT_TIMEFORMAT] = output_timeformat
+  clearRowFilters = False
 #  if sys.platform.startswith('win'):
 #    signal.signal(signal.SIGINT, signal.SIG_IGN)
   if multiprocessing.get_start_method() == 'spawn':
@@ -9614,9 +9643,15 @@ def CSVFileQueueHandler(mpQueue, mpQueueStdout, mpQueueStderr, csvPF, datetimeNo
       csvPF.SetTimestampColumn(GC.Values[GC.CSV_OUTPUT_TIMESTAMP_COLUMN])
       csvPF.SetHeaderFilter(GC.Values[GC.CSV_OUTPUT_HEADER_FILTER])
       csvPF.SetHeaderDropFilter(GC.Values[GC.CSV_OUTPUT_HEADER_DROP_FILTER])
-      csvPF.SetRowFilter(GC.Values[GC.CSV_OUTPUT_ROW_FILTER], GC.Values[GC.CSV_OUTPUT_ROW_FILTER_MODE])
-      csvPF.SetRowDropFilter(GC.Values[GC.CSV_OUTPUT_ROW_DROP_FILTER], GC.Values[GC.CSV_OUTPUT_ROW_DROP_FILTER_MODE])
+      if not clearRowFilters:
+        csvPF.SetRowFilter(GC.Values[GC.CSV_OUTPUT_ROW_FILTER], GC.Values[GC.CSV_OUTPUT_ROW_FILTER_MODE])
+        csvPF.SetRowDropFilter(GC.Values[GC.CSV_OUTPUT_ROW_DROP_FILTER], GC.Values[GC.CSV_OUTPUT_ROW_DROP_FILTER_MODE])
+      else:
+        csvPF.SetRowFilter([], GC.Values[GC.CSV_OUTPUT_ROW_FILTER_MODE])
+        csvPF.SetRowDropFilter([], GC.Values[GC.CSV_OUTPUT_ROW_DROP_FILTER_MODE])
       csvPF.SetRowLimit(GC.Values[GC.CSV_OUTPUT_ROW_LIMIT])
+    elif dataType == GM.REDIRECT_QUEUE_CLEAR_ROW_FILTERS:
+      clearRowFilters = dataItem
     else: #GM.REDIRECT_QUEUE_EOF
       break
   csvPF.writeCSVfile(list_type)
@@ -10597,6 +10632,7 @@ def getOAuthClientIDAndSecret():
     invalidClientSecretsJsonExit(str(e))
 
 def getScopesFromUser(scopesList, clientAccess, currentScopes=None):
+  forceOffScopes = []
   OAUTH2_CMDS = ['s', 'u', 'e', 'c']
   oauth2_menu = ''
   numScopes = len(scopesList)
@@ -10647,6 +10683,9 @@ Continue to authorization by entering a 'c'
               break
         i += 1
     else:
+      for api in currentScopes:
+        if api in API.FORCE_OFF_SA_SCOPES:
+          forceOffScopes.extend(currentScopes[api])
       i = 0
       for a_scope in scopesList:
         selectedScopes[i] = ' '
@@ -10715,12 +10754,12 @@ Continue to authorization by entering a 'c'
             for i in range(numScopes):
               selectedScopes[i] = ' '
           elif selection == 'e':
-            return None
+            return (None, None)
           break
         sys.stdout.write(f'{ERROR_PREFIX}Invalid input "{choice}"\n')
     if selection == 'c':
       break
-  return selectedScopes
+  return (selectedScopes, forceOffScopes)
 
 def _localhost_to_ip():
   '''returns IPv4 or IPv6 loopback address which localhost resolves to.
@@ -11067,7 +11106,7 @@ def doOAuthRequest(currentScopes, login_hint, verifyScopes=False):
   client_id, client_secret = getOAuthClientIDAndSecret()
   scopesList = API.getClientScopesList(GC.Values[GC.TODRIVE_CLIENTACCESS])
   if not currentScopes or verifyScopes:
-    selectedScopes = getScopesFromUser(scopesList, True, currentScopes)
+    selectedScopes, _ = getScopesFromUser(scopesList, True, currentScopes)
     if selectedScopes is None:
       return False
     scopes = set(API.REQUIRED_SCOPES)
@@ -11384,25 +11423,26 @@ def _waitForSvcAcctCompletion(i):
     sys.stdout.write(Msg.WAITING_FOR_ITEM_CREATION_TO_COMPLETE_SLEEPING.format(Ent.Singular(Ent.SVCACCT), sleep_time))
   time.sleep(sleep_time)
 
-def _grantRotateRights(iam, projectId, service_account, email, account_type='serviceAccount'):
+def _grantRotateRights(iam, projectId, service_account, account_type='serviceAccount'):
   body = {'policy': {'bindings': [{'role': 'roles/iam.serviceAccountKeyAdmin',
-                                   'members': [f'{account_type}:{email}']}]}}
+                                   'members': [f'{account_type}:{service_account}']}]}}
   maxRetries = 10
-  printEntityMessage([Ent.PROJECT, projectId, Ent.SVCACCT, email],
-                     Msg.HAS_RIGHTS_TO_ROTATE_OWN_PRIVATE_KEY.format(email, service_account))
+  kvList = [Ent.PROJECT, projectId, Ent.SVCACCT, service_account]
+  printEntityMessage(kvList, Msg.GRANTING_RIGHTS_TO_ROTATE_ITS_OWN_PRIVATE_KEY.format('Granting'))
   for retry in range(1, maxRetries+1):
     try:
       callGAPI(iam.projects().serviceAccounts(), 'setIamPolicy',
                throwReasons=[GAPI.INVALID_ARGUMENT],
                resource=f'projects/{projectId}/serviceAccounts/{service_account}', body=body)
+      printEntityMessage(kvList, Msg.GRANTING_RIGHTS_TO_ROTATE_ITS_OWN_PRIVATE_KEY.format('Granted'))
       return True
     except GAPI.invalidArgument as e:
-      entityActionFailedWarning([Ent.PROJECT, projectId, Ent.SVCACCT, service_account], str(e))
+      entityActionFailedWarning(kvList, str(e))
       if 'does not exist' not in str(e) or retry == maxRetries:
         return False
       _waitForSvcAcctCompletion(retry)
     except Exception as e:
-      entityActionFailedWarning([Ent.PROJECT, projectId, Ent.SVCACCT, service_account], str(e))
+      entityActionFailedWarning(kvList, str(e))
       return False
 
 def _createOauth2serviceJSON(httpObj, projectInfo, svcAcctInfo, create_key=True):
@@ -11420,6 +11460,7 @@ def _createOauth2serviceJSON(httpObj, projectInfo, svcAcctInfo, create_key=True)
     return False
   except GAPI.alreadyExists as e:
     entityActionFailedWarning([Ent.PROJECT, projectInfo['projectId'], Ent.SVCACCT, svcAcctInfo['name']], str(e))
+    writeStderr(Msg.RERUN_THE_COMMAND_AND_SPECIFY_A_NEW_SANAME)
     return False
   GM.Globals[GM.SVCACCT_SCOPES_DEFINED] = False
   if create_key and not doProcessSvcAcctKeys(mode='retainexisting', iam=iam,
@@ -11428,7 +11469,7 @@ def _createOauth2serviceJSON(httpObj, projectInfo, svcAcctInfo, create_key=True)
                                              clientId=service_account['uniqueId']):
     return False
   sa_email = service_account['name'].rsplit('/', 1)[-1]
-  return _grantRotateRights(iam, projectInfo['projectId'], sa_email, sa_email)
+  return _grantRotateRights(iam, projectInfo['projectId'], sa_email)
 
 def _createClientSecretsOauth2service(httpObj, login_hint, appInfo, projectInfo, svcAcctInfo, create_key=True):
   def _checkClientAndSecret(csHttpObj, client_id, client_secret):
@@ -11921,9 +11962,7 @@ def doUpdateProject():
       continue
     iam = getAPIService(API.IAM, httpObj)
     _getSvcAcctData() # needed to read in GM.OAUTH2SERVICE_JSON_DATA
-    _grantRotateRights(iam, projectId,
-                       GM.Globals[GM.OAUTH2SERVICE_JSON_DATA]['client_email'],
-                       GM.Globals[GM.OAUTH2SERVICE_JSON_DATA]['client_email'])
+    _grantRotateRights(iam, projectId, GM.Globals[GM.OAUTH2SERVICE_JSON_DATA]['client_email'])
   Ind.Decrement()
 
 # gam delete project [[admin] <EmailAddress>] [<ProjectIDEntity>]
@@ -12211,6 +12250,7 @@ def checkServiceAccount(users):
   checkScopesSet = set()
   saScopes = {}
   useColor = False
+  forceOffScopes = []
   while Cmd.ArgumentsRemaining():
     myarg = getArgument()
     if myarg in {'scope', 'scopes'}:
@@ -12236,12 +12276,16 @@ def checkServiceAccount(users):
     testWarn = 'WARN'
   if Act.Get() == Act.CHECK:
     if not checkScopesSet:
-      for scope in iter(GM.Globals[GM.SVCACCT_SCOPES].values()):
-        checkScopesSet.update(scope)
+      currentScopes = GM.Globals[GM.SVCACCT_SCOPES]
+      for api in currentScopes:
+        if api in API.FORCE_OFF_SA_SCOPES:
+          forceOffScopes.extend(currentScopes[api])
+        else:
+          checkScopesSet.update(currentScopes[api])
   else:
     if not checkScopesSet:
       scopesList = API.getSvcAcctScopesList(GC.Values[GC.USER_SERVICE_ACCOUNT_ACCESS_ONLY], True)
-      selectedScopes = getScopesFromUser(scopesList, False, GM.Globals[GM.SVCACCT_SCOPES])
+      selectedScopes, forceOffScopes = getScopesFromUser(scopesList, False, GM.Globals[GM.SVCACCT_SCOPES] if GM.Globals[GM.SVCACCT_SCOPES_DEFINED] else None)
       if selectedScopes is None:
         return False
       i = 0
@@ -12303,8 +12347,8 @@ def checkServiceAccount(users):
   if saTokenStatus == testFail:
     invalidOauth2serviceJsonExit(f'Authentication{auth_error}')
   _getSvcAcctData() # needed to read in GM.OAUTH2SERVICE_JSON_DATA
-  if GM.Globals[GM.SVCACCT_SCOPES_DEFINED] and API.IAM not in GM.Globals[GM.SVCACCT_SCOPES]:
-    GM.Globals[GM.SVCACCT_SCOPES][API.IAM] = [API.CLOUD_PLATFORM_SCOPE]
+  if API.IAM not in GM.Globals[GM.SVCACCT_SCOPES]:
+    GM.Globals[GM.SVCACCT_SCOPES][API.IAM] = [API.IAM_SCOPE]
   key_type = GM.Globals[GM.OAUTH2SERVICE_JSON_DATA].get('key_type', 'default')
   if key_type == 'default':
     printMessage(Msg.SERVICE_ACCOUNT_CHECK_PRIVATE_KEY_AGE)
@@ -12364,6 +12408,17 @@ def checkServiceAccount(users):
         scopeStatus = testFail
         allScopesPass = False
       printPassFail(scope, f'{scopeStatus}{currentCount(j, jcount)}')
+    if forceOffScopes:
+      allScopesPass = False
+      if useColor:
+        scopeStatus = createRedText('DISABLE')
+      else:
+        scopeStatus = 'DISABLE'
+      jcount = len(forceOffScopes)
+      j = 0
+      for scope in forceOffScopes:
+        j +=1
+        printPassFail(scope, f'{scopeStatus}{currentCount(j, jcount)}')
     Ind.Decrement()
     service_account = GM.Globals[GM.OAUTH2SERVICE_JSON_DATA]['client_id']
     if allScopesPass:
@@ -12786,7 +12841,7 @@ def doUploadSvcAcctKeys():
   iam = getAPIService(API.IAM, httpObj)
   if doProcessSvcAcctKeys(mode='upload', iam=iam):
     sa_email = GM.Globals[GM.OAUTH2SERVICE_JSON_DATA]['client_email']
-    _grantRotateRights(iam, GM.Globals[GM.OAUTH2SERVICE_JSON_DATA]['project_id'], sa_email, sa_email)
+    _grantRotateRights(iam, GM.Globals[GM.OAUTH2SERVICE_JSON_DATA]['project_id'], sa_email)
     sys.stdout.write(Msg.YOUR_GAM_PROJECT_IS_CREATED_AND_READY_TO_USE)
 
 # gam delete sakeys <ServiceAccountKeyList>
@@ -13491,6 +13546,8 @@ REPORT_CHOICE_MAP = {
   'drive': 'drive',
   'enterprisegroups': 'groups_enterprise',
   'gcp': 'gcp',
+  'gemini': 'gemini_for_workspace',
+  'geminiforworkspace': 'gemini_for_workspace',
   'gplus': 'gplus',
   'google+': 'gplus',
   'group': 'groups',
@@ -13788,6 +13845,20 @@ def doReport():
         csvPF.WriteRow(row)
     return (True, lastDate)
 
+  # dynamically extend our choices with other reports Google dynamically adds
+  rep = buildGAPIObject(API.REPORTS)
+  dyn_choices = rep._rootDesc \
+          .get('resources', {}) \
+          .get('activities', {}) \
+          .get('methods', {}) \
+          .get('list', {}) \
+          .get('parameters', {}) \
+          .get('applicationName', {}) \
+          .get('enum', [])
+  for dyn_choice in dyn_choices:
+    if dyn_choice.replace('_', '') not in REPORT_CHOICE_MAP and \
+       dyn_choice not in REPORT_CHOICE_MAP.values():
+      REPORT_CHOICE_MAP[dyn_choice.replace('_', '')] = dyn_choice
   report = getChoice(REPORT_CHOICE_MAP, mapChoice=True)
   if report == 'usage':
     doReportUsage()
@@ -13795,7 +13866,6 @@ def doReport():
   if report == 'usageparameters':
     doReportUsageParameters()
     return
-  rep = buildGAPIObject(API.REPORTS)
   customerId = GC.Values[GC.CUSTOMER_ID]
   if customerId == GC.MY_CUSTOMER:
     customerId = None
@@ -14145,6 +14215,7 @@ def doReport():
       startDateTime += oneDay
     csvPF.writeCSVfile(f'Customer Report - {tryDate}')
   else: # activityReports
+    csvPF.SetTitles('name')
     if addCSVData:
       csvPF.AddTitles(sorted(addCSVData.keys()))
     if select:
@@ -14303,11 +14374,11 @@ def doReport():
         row = {'name': 'NoActivities'}
         if addCSVData:
           row.update(addCSVData)
-          csvPF.WriteRowTitles(row)
-      csvPF.SetSortTitles(['name'])
+        csvPF.WriteRowTitles(row)
     else:
       if eventRowFilter:
         csvPF.SetRowFilter([], GC.Values[GC.CSV_OUTPUT_ROW_FILTER_MODE])
+        csvPF.SetRowDropFilter([], GC.Values[GC.CSV_OUTPUT_ROW_DROP_FILTER_MODE])
       if not countsSummary:
         titles = ['emailAddress']
         if countsOnly and countsByDate:
@@ -14356,7 +14427,7 @@ def doReport():
           if addCSVData:
             row.update(addCSVData)
           csvPF.WriteRow(row)
-    csvPF.writeCSVfile(f'{report.capitalize()} Activity Report')
+    csvPF.writeCSVfile(f'{report.capitalize()} Activity Report', eventRowFilter)
 
 # Substitute for #user#, #email#, #usernamne#
 def _substituteForUser(field, user, userName):
@@ -15763,27 +15834,13 @@ ANALYTIC_ENTITY_MAP = {
      'pageSize': 50,
      'maxPageSize': 200,
      },
-  Ent.ANALYTIC_UA_PROPERTY:
-    {'titles': ['User', 'accountId', 'name', 'id', 'created', 'updated'],
-     'JSONtitles': ['User', 'accountId', 'name', 'id', 'JSON'],
-     'timeObjects': ['created', 'updated'],
-     'items': 'items',
-     'pageSize': 50,
-     'maxPageSize': 200,
-     },
   }
 
 def printShowAnalyticItems(users, entityType):
   analyticEntityMap = ANALYTIC_ENTITY_MAP[entityType]
   csvPF = CSVPrintFile(analyticEntityMap['titles'], 'sortall') if Act.csvFormat() else None
   FJQC = FormatJSONQuoteChar(csvPF)
-  if entityType != Ent.ANALYTIC_UA_PROPERTY:
-    kwargs = {'pageSize': analyticEntityMap['pageSize']}
-    api = API.ANALYTICS_ADMIN
-  else:
-#    kwargs = {'webPropertyId': '~all'}
-    kwargs = {}
-    api = API.ANALYTICS
+  kwargs = {'pageSize': analyticEntityMap['pageSize']}
   if entityType in {Ent.ANALYTIC_ACCOUNT, Ent.ANALYTIC_PROPERTY}:
     kwargs['showDeleted'] = False
   while Cmd.ArgumentsRemaining():
@@ -15796,16 +15853,12 @@ def printShowAnalyticItems(users, entityType):
       kwargs['showDeleted'] = getBoolean()
     elif entityType == Ent.ANALYTIC_PROPERTY and myarg == 'filter':
       kwargs['filter'] = getString(Cmd.OB_STRING)
-    elif entityType == Ent.ANALYTIC_UA_PROPERTY and myarg == 'accountid':
-      kwargs['accountId'] = getString(Cmd.OB_STRING).replace('accounts/', '')
     elif entityType == Ent.ANALYTIC_DATASTREAM and myarg == 'parent':
       kwargs['parent'] = getString(Cmd.OB_STRING)
     else:
       FJQC.GetFormatJSONQuoteChar(myarg, True)
   if entityType == Ent.ANALYTIC_PROPERTY and 'filter' not in kwargs:
     missingArgumentExit('filter')
-  if entityType == Ent.ANALYTIC_UA_PROPERTY and 'accountId' not in kwargs:
-    missingArgumentExit('accountid')
   if entityType == Ent.ANALYTIC_DATASTREAM and 'parent' not in kwargs:
     missingArgumentExit('parent')
   if csvPF and FJQC.formatJSON:
@@ -15813,7 +15866,7 @@ def printShowAnalyticItems(users, entityType):
   i, count, users = getEntityArgument(users)
   for user in users:
     i += 1
-    user, analytics = buildGAPIServiceObject(api, user, i, count)
+    user, analytics = buildGAPIServiceObject(API.ANALYTICS_ADMIN, user, i, count)
     if not analytics:
       continue
     if entityType == Ent.ANALYTIC_ACCOUNT:
@@ -15822,11 +15875,8 @@ def printShowAnalyticItems(users, entityType):
       service = analytics.accountSummaries()
     elif entityType == Ent.ANALYTIC_DATASTREAM:
       service = analytics.properties().dataStreams()
-    elif entityType == Ent.ANALYTIC_PROPERTY:
+    else: #  entityType == Ent.ANALYTIC_PROPERTY:
       service = analytics.properties()
-    else: #Ent.ANALYTIC_UA_PROPERTY:
-      service = analytics.management().webproperties()
-#      service = analytics.management().profiles()
     if csvPF:
       printGettingAllEntityItemsForWhom(entityType, user, i, count)
       pageMessage = getPageMessageForWhom()
@@ -15867,10 +15917,7 @@ def printShowAnalyticItems(users, entityType):
         if not FJQC.formatJSON:
           csvPF.WriteRowTitles(row)
         elif csvPF.CheckRowTitles(row):
-          if entityType != Ent.ANALYTIC_UA_PROPERTY:
-            row = {'User': user, 'name': item['name'], 'displayName': item['displayName']}
-          else:
-            row = {'User': user, 'accountId': item['accountId'], 'id': item['id'], 'name': item['name']}
+          row = {'User': user, 'name': item['name'], 'displayName': item['displayName']}
           for field in analyticEntityMap['JSONtitles'][2:-1]:
             row[field] = item[field]
           row['JSON'] = json.dumps(cleanJSON(item, timeObjects=analyticEntityMap['timeObjects']),
@@ -15907,17 +15954,6 @@ def printShowAnalyticAccountSummaries(users):
 #	[formatjson]
 def printShowAnalyticProperties(users):
   printShowAnalyticItems(users, Ent.ANALYTIC_PROPERTY)
-
-# gam <UserTypeEntity> print analyticuaproperties [todrive <ToDriveAttribute>*]
-#	accountid [accounts/]<String>
-#	[maxresults <Integer>]
-#	[formatjson [quotechar <Character>]]
-# gam <UserTypeEntity> show analyticuaproperties
-#	accountid [accounts/]<String>
-#	[maxresults <Integer>]
-#	[formatjson]
-def printShowAnalyticUAProperties(users):
-  printShowAnalyticItems(users, Ent.ANALYTIC_UA_PROPERTY)
 
 # gam <UserTypeEntity> print analyticdatastreams [todrive <ToDriveAttribute>*]
 #	parent <String>
@@ -16491,8 +16527,10 @@ def getRoleId():
       invalidChoiceExit(role, GM.Globals[GM.MAP_ROLE_NAME_TO_ID], True)
   return (role, roleId)
 
-# gam create adminrole <String> privileges all|all_ou|<PrivilegesList> [description <String>]
-# gam update adminrole <RoleItem> [name <String>] [privileges all|all_ou|<PrivilegesList>] [description <String>]
+# gam create adminrole <String> [description <String>]
+#	privileges all|all_ou|<PrivilegesList>|(select <FileSelector>|<CSVFileSelector>)
+# gam update adminrole <RoleItem> [name <String>] [description <String>]
+#	[privileges all|all_ou|<PrivilegesList>|(select <FileSelector>|<CSVFileSelector>)]
 def doCreateUpdateAdminRoles():
   def expandChildPrivileges(privilege):
     for childPrivilege in privilege.get('childPrivileges', []):
@@ -16523,8 +16561,12 @@ def doCreateUpdateAdminRoles():
       elif privs == 'ALL_OU':
         body['rolePrivileges'] = [{'privilegeName': p, 'serviceId': v} for p, v in ouPrivileges.items()]
       else:
+        if privs == 'SELECT':
+          privsList = [p.upper() for p in getEntityList(Cmd.OB_PRIVILEGE_LIST)]
+        else:
+          privsList = privs.replace(',', ' ').split()
         body.setdefault('rolePrivileges', [])
-        for p in privs.split(','):
+        for p in privsList:
           if p in allPrivileges:
             body['rolePrivileges'].append({'privilegeName': p, 'serviceId': allPrivileges[p]})
           elif p in ouPrivileges:
@@ -16534,6 +16576,8 @@ def doCreateUpdateAdminRoles():
           elif ':' in p:
             priv, serv = p.split(':')
             body['rolePrivileges'].append({'privilegeName': priv, 'serviceId': serv.lower()})
+          elif p == 'SUPPORT':
+            pass
           else:
             invalidChoiceExit(p, list(allPrivileges.keys())+list(ouPrivileges.keys())+list(childPrivileges.keys()), True)
     elif myarg == 'description':
@@ -16551,12 +16595,12 @@ def doCreateUpdateAdminRoles():
                         customer=GC.Values[GC.CUSTOMER_ID], body=body, fields='roleId,roleName')
     else:
       result = callGAPI(cd.roles(), 'patch',
-                        throwReasons=[GAPI.BAD_REQUEST, GAPI.CUSTOMER_NOT_FOUND, GAPI.FORBIDDEN]+[GAPI.NOT_FOUND, GAPI.FAILED_PRECONDITION],
+                        throwReasons=[GAPI.BAD_REQUEST, GAPI.CUSTOMER_NOT_FOUND, GAPI.FORBIDDEN]+[GAPI.NOT_FOUND, GAPI.FAILED_PRECONDITION, GAPI.CONFLICT],
                         customer=GC.Values[GC.CUSTOMER_ID], roleId=roleId, body=body, fields='roleId,roleName')
     entityActionPerformed([Ent.ADMIN_ROLE, f"{result['roleName']}({result['roleId']})"])
   except GAPI.duplicate as e:
     entityActionFailedWarning([Ent.ADMIN_ROLE, f"{body['roleName']}"], str(e))
-  except (GAPI.notFound, GAPI.forbidden, GAPI.failedPrecondition) as e:
+  except (GAPI.notFound, GAPI.forbidden, GAPI.failedPrecondition, GAPI.conflict) as e:
     entityActionFailedWarning([Ent.ADMIN_ROLE, roleId], str(e))
   except (GAPI.badRequest, GAPI.customerNotFound):
     accessErrorExit(cd)
@@ -16599,61 +16643,53 @@ def _showAdminRole(role, i=0, count=0):
   Ind.Decrement()
 
 # gam info adminrole <RoleItem> [privileges]
-def doInfoAdminRole():
-  cd = buildGAPIObject(API.DIRECTORY)
-  fieldsList = PRINT_ADMIN_ROLES_FIELDS[:]
-  _, roleId = getRoleId()
-  while Cmd.ArgumentsRemaining():
-    myarg = getArgument()
-    if myarg == 'privileges':
-      fieldsList.append('rolePrivileges')
-    else:
-      unknownArgumentExit()
-  fields = getFieldsFromFieldsList(fieldsList)
-  try:
-    role = callGAPI(cd.roles(), 'get',
-                    throwReasons=[GAPI.NOT_FOUND, GAPI.FORBIDDEN, GAPI.FAILED_PRECONDITION,
-                                  GAPI.BAD_REQUEST, GAPI.CUSTOMER_NOT_FOUND],
-                    customer=GC.Values[GC.CUSTOMER_ID], roleId=roleId, fields=fields)
-    role.setdefault('isSuperAdminRole', False)
-    role.setdefault('isSystemRole', False)
-    _showAdminRole(role)
-  except (GAPI.notFound, GAPI.forbidden, GAPI.failedPrecondition) as e:
-    entityActionFailedWarning([Ent.ADMIN_ROLE, roleId], str(e))
-  except (GAPI.badRequest, GAPI.customerNotFound):
-    accessErrorExit(cd)
-
 # gam print adminroles|roles [todrive <ToDriveAttribute>*]
-#	[privileges] [oneitemperrow]
-# gam show adminroles|roles [privileges]
-def doPrintShowAdminRoles():
+#	[role <RoleItem>] [privileges] [oneitemperrow]
+# gam show adminroles|roles
+#	[role <RoleItem>] [privileges]
+def doInfoPrintShowAdminRoles():
   cd = buildGAPIObject(API.DIRECTORY)
   fieldsList = PRINT_ADMIN_ROLES_FIELDS[:]
   csvPF = CSVPrintFile(fieldsList, PRINT_ADMIN_ROLES_FIELDS) if Act.csvFormat() else None
   oneItemPerRow = False
+  if Act.Get() != Act.INFO:
+    roleId = None
+  else:
+    _, roleId = getRoleId()
   while Cmd.ArgumentsRemaining():
     myarg = getArgument()
     if csvPF and myarg == 'todrive':
       csvPF.GetTodriveParameters()
+    elif roleId is None and myarg == 'role':
+      _, roleId = getRoleId()
     elif myarg == 'privileges':
       fieldsList.append('rolePrivileges')
     elif myarg == 'oneitemperrow':
       oneItemPerRow = True
     else:
       unknownArgumentExit()
-  if csvPF:
+  if csvPF and 'rolePrivileges' in fieldsList:
     if not oneItemPerRow:
       csvPF.AddTitles(['rolePrivileges'])
     else:
       csvPF.AddTitles(['privilegeName', 'serviceId'])
-  fields = getItemFieldsFromFieldsList('items', fieldsList)
-  printGettingAllAccountEntities(Ent.ADMIN_ROLE)
   try:
-    roles = callGAPIpages(cd.roles(), 'list', 'items',
-                          pageMessage=getPageMessage(),
-                          throwReasons=[GAPI.BAD_REQUEST, GAPI.CUSTOMER_NOT_FOUND, GAPI.FORBIDDEN],
-                          customer=GC.Values[GC.CUSTOMER_ID], fields=fields)
-  except (GAPI.badRequest, GAPI.customerNotFound, GAPI.forbidden):
+    if roleId is None:
+      fields = getItemFieldsFromFieldsList('items', fieldsList)
+      printGettingAllAccountEntities(Ent.ADMIN_ROLE)
+      roles = callGAPIpages(cd.roles(), 'list', 'items',
+                            pageMessage=getPageMessage(),
+                            throwReasons=[GAPI.BAD_REQUEST, GAPI.CUSTOMER_NOT_FOUND, GAPI.FORBIDDEN],
+                            customer=GC.Values[GC.CUSTOMER_ID], fields=fields)
+    else:
+      fields = getFieldsFromFieldsList(fieldsList)
+      roles = [callGAPI(cd.roles(), 'get',
+                        throwReasons=[GAPI.NOT_FOUND, GAPI.FORBIDDEN, GAPI.FAILED_PRECONDITION,
+                                      GAPI.BAD_REQUEST, GAPI.CUSTOMER_NOT_FOUND],
+                        customer=GC.Values[GC.CUSTOMER_ID], roleId=roleId, fields=fields)]
+  except (GAPI.notFound, GAPI.forbidden, GAPI.failedPrecondition) as e:
+    entityActionFailedWarning([Ent.ADMIN_ROLE, roleId], str(e))
+  except (GAPI.badRequest, GAPI.customerNotFound):
     accessErrorExit(cd)
   for role in roles:
     role.setdefault('isSuperAdminRole', False)
@@ -17087,11 +17123,11 @@ DATA_TRANSFER_SORT_TITLES = ['id', 'requestTime', 'oldOwnerUserEmail', 'newOwner
 
 # gam print datatransfers|transfers [todrive <ToDriveAttribute>*]
 #	[olduser|oldowner <UserItem>] [newuser|newowner <UserItem>]
-#	[status <String>] [delimiter <Character>]]
+#	[status <String>] [delimiter <Character>]
 #	(addcsvdata <FieldName> <String>)*
 # gam show datatransfers|transfers
 #	[olduser|oldowner <UserItem>] [newuser|newowner <UserItem>]
-#	[status <String>] [delimiter <Character>]]
+#	[status <String>] [delimiter <Character>]
 def doPrintShowDataTransfers():
   dt = buildGAPIObject(API.DATATRANSFER)
   apps = getTransferApplications(dt)
@@ -19990,7 +20026,9 @@ def dedupEmailAddressMatches(contactsManager, emailMatchType, fields):
     fields[CONTACT_EMAILS] = savedAddresses
   return updateRequired
 
-def _createContact():
+# gam create contact <ContactAttribute>+
+#	[(csv [todrive <ToDriveAttribute>*] (addcsvdata <FieldName> <String>)*))| returnidonly]
+def doCreateDomainContact():
   entityType = Ent.DOMAIN
   contactsManager = ContactsManager()
   parameters = {'csvPF': None, 'titles': ['Domain', CONTACT_ID], 'addCSVData': {}, 'returnIdOnly': False}
@@ -20001,7 +20039,7 @@ def _createContact():
     csvPF.AddTitles(sorted(addCSVData.keys()))
   returnIdOnly = parameters['returnIdOnly']
   contactEntry = contactsManager.FieldsToContact(fields)
-  user, contactsObject = getContactsObject(True)
+  user, contactsObject = getContactsObject()
   try:
     contact = callGData(contactsObject, 'CreateContact',
                         throwErrors=[GDATA.BAD_REQUEST, GDATA.SERVICE_NOT_APPLICABLE, GDATA.FORBIDDEN],
@@ -20026,11 +20064,6 @@ def _createContact():
   if csvPF:
     csvPF.writeCSVfile('Contacts')
 
-# gam create contact <ContactAttribute>+
-#	[(csv [todrive <ToDriveAttribute>*] (addcsvdata <FieldName> <String>)*))| returnidonly]
-def doCreateDomainContact():
-  _createContact()
-
 def _clearUpdateContacts(updateContacts):
   entityType = Ent.DOMAIN
   contactsManager = ContactsManager()
@@ -20052,7 +20085,7 @@ def _clearUpdateContacts(updateContacts):
         unknownArgumentExit()
     if not contactClear['emailClearPattern']:
       missingArgumentExit('emailclearpattern')
-  user, contactsObject = getContactsObject(True)
+  user, contactsObject = getContactsObject()
   if queriedContacts:
     entityList = queryContacts(contactsObject, contactQuery)
     if entityList is None:
@@ -20123,7 +20156,8 @@ def doClearDomainContacts():
 def doUpdateDomainContacts():
   _clearUpdateContacts(True)
 
-def _dedupContacts():
+# gam dedup contacts <ContactEntity>|<ContactSelection> [matchType [<Boolean>]]
+def doDedupDomainContacts():
   entityType = Ent.DOMAIN
   contactsManager = ContactsManager()
   contactQuery = _initContactQueryAttributes()
@@ -20134,7 +20168,7 @@ def _dedupContacts():
       emailMatchType = getBoolean()
     else:
       _getContactQueryAttributes(contactQuery, myarg, -1, False)
-  user, contactsObject = getContactsObject(True)
+  user, contactsObject = getContactsObject()
   contacts = queryContacts(contactsObject, contactQuery)
   if contacts is None:
     return
@@ -20174,15 +20208,12 @@ def _dedupContacts():
       break
   Ind.Decrement()
 
-# gam dedup contacts <ContactEntity>|<ContactSelection> [matchType [<Boolean>]]
-def doDedupDomainContacts():
-  _dedupContacts()
-
-def _deleteContacts():
+# gam delete contacts <ContactEntity>|<ContactSelection>
+def doDeleteDomainContacts():
   entityType = Ent.DOMAIN
   contactsManager = ContactsManager()
   entityList, contactQuery, queriedContacts = _getContactEntityList(-1, False)
-  user, contactsObject = getContactsObject(True)
+  user, contactsObject = getContactsObject()
   if queriedContacts:
     entityList = queryContacts(contactsObject, contactQuery)
     if entityList is None:
@@ -20221,10 +20252,6 @@ def _deleteContacts():
       entityUnknownWarning(entityType, user)
       break
   Ind.Decrement()
-
-# gam delete contacts <ContactEntity>|<ContactSelection>
-def doDeleteDomainContacts():
-  _deleteContacts()
 
 CONTACT_TIME_OBJECTS = {CONTACT_UPDATED}
 CONTACT_FIELDS_WITH_CRS_NLS = {CONTACT_NOTES, CONTACT_BILLING_INFORMATION}
@@ -20293,7 +20320,10 @@ def _getContactFieldsList(contactsManager, displayFieldsList):
     else:
       invalidChoiceExit(field, contactsManager.CONTACT_ARGUMENT_TO_PROPERTY_MAP, True)
 
-def _infoContacts(contactFeed):
+# gam info contacts <ContactEntity>
+#	[basic|full]
+#	[fields <ContactFieldNameList>] [formatjson]
+def doInfoDomainContacts():
   entityType = Ent.DOMAIN
   contactsManager = ContactsManager()
   entityList = getEntityList(Cmd.OB_CONTACT_ENTITY)
@@ -20308,7 +20338,7 @@ def _infoContacts(contactFeed):
       _getContactFieldsList(contactsManager, displayFieldsList)
     else:
       FJQC.GetFormatJSON(myarg)
-  user, contactsObject = getContactsObject(contactFeed)
+  user, contactsObject = getContactsObject()
   j = 0
   jcount = len(entityList)
   if not FJQC.formatJSON:
@@ -20336,19 +20366,13 @@ def _infoContacts(contactFeed):
       break
   Ind.Decrement()
 
-# gam info contacts <ContactEntity>
-#	[basic|full]
+# gam print contacts [todrive <ToDriveAttribute>*] <ContactSelection>
+#	[basic|full|countsonly] [showdeleted] [orderby <ContactOrderByFieldName> [ascending|descending]]
+#	[fields <ContactFieldNameList>] [formatjson [quotechar <Character>]]
+# gam show contacts <ContactSelection>
+#	[basic|full|countsonly] [showdeleted] [orderby <ContactOrderByFieldName> [ascending|descending]]
 #	[fields <ContactFieldNameList>] [formatjson]
-def doInfoDomainContacts():
-  _infoContacts(True)
-
-# gam info gal <ContactEntity>
-#	[basic|full]
-#	[fields <ContactFieldNameList>] [formatjson]
-def doInfoGAL():
-  _infoContacts(False)
-
-def _printShowContacts(contactFeed):
+def doPrintShowDomainContacts():
   entityType = Ent.DOMAIN
   entityTypeName = Ent.Singular(entityType)
   contactsManager = ContactsManager()
@@ -20374,7 +20398,7 @@ def _printShowContacts(contactFeed):
       pass
     else:
       FJQC.GetFormatJSONQuoteChar(myarg, True)
-  user, contactsObject = getContactsObject(contactFeed)
+  user, contactsObject = getContactsObject()
   contacts = queryContacts(contactsObject, contactQuery)
   if countsOnly:
     jcount = countLocalContactSelects(contactsManager, contacts, contactQuery)
@@ -20459,24 +20483,6 @@ def _printShowContacts(contactFeed):
                                                      ensure_ascii=False, sort_keys=True)})
   if csvPF:
     csvPF.writeCSVfile(CSVTitle)
-
-# gam print contacts [todrive <ToDriveAttribute>*] <ContactSelection>
-#	[basic|full|countsonly] [showdeleted] [orderby <ContactOrderByFieldName> [ascending|descending]]
-#	[fields <ContactFieldNameList>] [formatjson [quotechar <Character>]]
-# gam show contacts <ContactSelection>
-#	[basic|full|countsonly] [showdeleted] [orderby <ContactOrderByFieldName> [ascending|descending]]
-#	[fields <ContactFieldNameList>] [formatjson]
-def doPrintShowDomainContacts():
-  _printShowContacts(True)
-
-# gam print gal [todrive <ToDriveAttribute>*] <ContactSelection>
-#	[basic|full] [orderby <ContactOrderByFieldName> [ascending|descending]]
-#	[fields <ContactFieldNameList>] [formatjson [quotechar <Character>]]
-# gam show gal <ContactSelection>
-#	[basic|full|countsonly] [orderby <ContactOrderByFieldName> [ascending|descending]]
-#	[fields <ContactFieldNameList>] [formatjson]
-def doPrintShowGAL():
-  _printShowContacts(False)
 
 # Prople commands utilities
 #
@@ -23774,12 +23780,14 @@ CROS_FIELDS_CHOICE_MAP = {
   'autoupdatethrough': 'autoUpdateThrough',
   'backlightinfo': 'backlightInfo',
   'bootmode': 'bootMode',
+  'chromeostype': 'chromeOsType',
   'cpuinfo': 'cpuInfo',
   'cpustatusreports': 'cpuStatusReports',
   'deprovisionreason': 'deprovisionReason',
   'devicefiles': ['deviceFiles.type', 'deviceFiles.createTime'],
   'deviceid': 'deviceId',
   'devicelicensetype': 'deviceLicenseType',
+  'diskspaceusage': 'diskSpaceUsage',
   'diskvolumereports': 'diskVolumeReports',
   'dockmacaddress': 'dockMacAddress',
   'ethernetmacaddress': 'ethernetMacAddress',
@@ -23787,6 +23795,7 @@ CROS_FIELDS_CHOICE_MAP = {
   'extendedsupporteligible': 'extendedSupportEligible',
   'extendedsupportstart': 'extendedSupportStart',
   'extendedsupportenabled': 'extendedSupportEnabled',
+  'faninfo': 'fanInfo',
   'firmwareversion': 'firmwareVersion',
   'firstenrollmenttime': 'firstEnrollmentTime',
   'lastdeprovisiontimestamp': 'lastDeprovisionTimestamp',
@@ -23834,6 +23843,7 @@ CROS_SCALAR_PROPERTY_PRINT_ORDER = [
   'notes',
   'serialNumber',
   'status',
+  'chromeOsType',
   'deviceLicenseType',
   'model',
   'firmwareVersion',
@@ -23854,6 +23864,7 @@ CROS_SCALAR_PROPERTY_PRINT_ORDER = [
   'manufactureDate',
   'supportEndDate',
   'autoUpdateExpiration',
+  'autoUpdateThrough',
   'willAutoRenew',
   ]
 
@@ -23878,8 +23889,11 @@ CROS_TIME_OBJECTS = {
   'lastDeprovisionTimestamp',
   'lastEnrollmentTime',
   'lastSync',
+  'rebootTime',
   'reportTime',
   'supportEndDate',
+  'updateTime',
+  'updateCheckTime',
   }
 CROS_FIELDS_WITH_CRS_NLS = {'notes'}
 CROS_START_ARGUMENTS = ['start', 'startdate', 'oldestdate']
@@ -23996,13 +24010,13 @@ def infoCrOSDevices(entityList):
             printKeyValueWithCRsNLs(up, cros[up])
         else:
           printKeyValueList([up, formatLocalTime(cros[up])])
-    up = 'tpmVersionInfo'
-    if up in cros:
-      printKeyValueList([up, ''])
-      Ind.Increment()
-      for key, value in sorted(iter(cros[up].items())):
-        printKeyValueList([key, value])
-      Ind.Decrement()
+    for up in ['diskSpaceUsage', 'osUpdateStatus', 'tpmVersionInfo']:
+      if up in cros:
+        printKeyValueList([up, ''])
+        Ind.Increment()
+        for key, value in sorted(iter(cros[up].items())):
+          printKeyValueList([key, value])
+        Ind.Decrement()
     if not noLists:
       activeTimeRanges = _filterActiveTimeRanges(cros, True, listLimit, startDate, endDate, activeTimeRangesOrder)
       if activeTimeRanges:
@@ -24056,6 +24070,9 @@ def infoCrOSDevices(entityList):
         entityActionNotPerformedWarning([Ent.CROS_DEVICE, deviceId, Ent.DEVICE_FILE, downloadfile],
                                         Msg.NO_ENTITIES_FOUND.format(Ent.Plural(Ent.DEVICE_FILE)), i, count)
         Act.Set(Act.INFO)
+      cpuInfo = _filterBasicList(cros, 'cpuInfo', True, listLimit)
+      if cpuInfo:
+        showJSON('cpuInfo', cpuInfo, dictObjectsKey={'cpuInfo': 'model'})
       cpuStatusReports = _filterCPUStatusReports(cros, True, listLimit, startTime, endTime)
       if cpuStatusReports:
         printKeyValueList(['cpuStatusReports'])
@@ -24073,6 +24090,12 @@ def infoCrOSDevices(entityList):
             printKeyValueList(['cpuUtilizationPercentageInfo', cpuStatusReport['cpuUtilizationPercentageInfo']])
           Ind.Decrement()
         Ind.Decrement()
+      backlightInfo = _filterBasicList(cros, 'backLightInfo', True, listLimit)
+      if backlightInfo:
+        showJSON('backlightInfo', backlightInfo, dictObjectsKey={'backlightInfo': 'path'})
+      fanInfo = _filterBasicList(cros, 'fanInfo', True, listLimit)
+      if fanInfo:
+        showJSON('fanInfo', fanInfo)
       diskVolumeReports = _filterBasicList(cros, 'diskVolumeReports', True, listLimit)
       if diskVolumeReports:
         printKeyValueList(['diskVolumeReports'])
@@ -24299,7 +24322,7 @@ CROS_ENTITIES_MAP = {
   }
 
 CROS_INDEXED_TITLES = ['activeTimeRanges', 'recentUsers', 'deviceFiles',
-                       'cpuStatusReports', 'diskVolumeReports', 'lastKnownNetwork', 'screenshotFiles', 'systemRamFreeReports']
+                       'cpuStatusReports', 'cpuInfo', 'backlightInfo', 'fanInfo', 'diskVolumeReports', 'lastKnownNetwork', 'screenshotFiles', 'systemRamFreeReports']
 
 # gam print cros [todrive <ToDriveAttribute>*]
 #	[(query <QueryCrOS>)|(queries <QueryCrOSList>) [querytime<String> <Time>]
@@ -24346,12 +24369,15 @@ def doPrintCrOSDevices(entityList=None):
     if not noLists and not selectedLists:
       csvPF.WriteRowTitles(flattenJSON(cros, listLimit=listLimit, timeObjects=CROS_TIME_OBJECTS))
       return
-    attrib = 'tpmVersionInfo'
-    if attrib in cros:
-      for key, value in sorted(iter(cros[attrib].items())):
-        attribKey = f'{attrib}{GC.Values[GC.CSV_OUTPUT_SUBFIELD_DELIMITER]}{key}'
-        cros[attribKey] = value
-      cros.pop(attrib)
+    for attrib in ['diskSpaceUsage', 'osUpdateStatus', 'tpmVersionInfo']:
+      if attrib in cros:
+        for key, value in sorted(iter(cros[attrib].items())):
+          attribKey = f'{attrib}{GC.Values[GC.CSV_OUTPUT_SUBFIELD_DELIMITER]}{key}'
+          if key not in CROS_TIME_OBJECTS:
+            cros[attribKey] = value
+          else:
+            cros[attribKey] = formatLocalTime(value)
+        cros.pop(attrib)
     activeTimeRanges = _filterActiveTimeRanges(cros, selectedLists.get('activeTimeRanges', False), listLimit, startDate, endDate, activeTimeRangesOrder)
     recentUsers = _filterRecentUsers(cros, selectedLists.get('recentUsers', False), listLimit)
     deviceFiles = _filterDeviceFiles(cros, selectedLists.get('deviceFiles', False), listLimit, startTime, endTime)
@@ -24365,8 +24391,10 @@ def doPrintCrOSDevices(entityList=None):
       return
     row = {}
     for attrib in cros:
-      if attrib not in {'kind', 'etag', 'tpmVersionInfo', 'recentUsers', 'activeTimeRanges',
-                        'deviceFiles', 'cpuStatusReports', 'diskVolumeReports', 'lastKnownNetwork', 'screenshotFiles', 'systemRamFreeReports'}:
+      if attrib in {'cpuInfo', 'backlightInfo', 'fanInfo'}:
+        flattenJSON({attrib: cros[attrib]}, flattened=row)
+      elif attrib not in {'kind', 'etag', 'diskSpaceUsage', 'osUpdateStatus', 'tpmVersionInfo', 'activeTimeRanges', 'recentUsers',
+                          'deviceFiles', 'cpuStatusReports', 'diskVolumeReports', 'lastKnownNetwork', 'screenshotFiles', 'systemRamFreeReports'}:
         if attrib not in CROS_TIME_OBJECTS:
           row[attrib] = cros[attrib]
         else:
@@ -25964,7 +25992,7 @@ def _printChatItem(user, citem, parent, entityType, csvPF, FJQC, addCSVData=None
 def doSetupChat():
   checkForExtraneousArguments()
   _, chat , _ = buildChatServiceObject()
-  writeStdout(Msg.TO_SET_UP_GOOGLE_CHAT.format(setupChatURL(chat)))
+  writeStdout(Msg.TO_SET_UP_GOOGLE_CHAT.format(setupChatURL(chat), GM.Globals[GM.OAUTH2SERVICE_JSON_DATA]['project_id']))
 
 def getSpaceName(myarg):
   if myarg == 'space':
@@ -26471,6 +26499,64 @@ def _getChatMemberEmail(cd, member):
   elif 'groupMember' in member:
     _, memberUid = member['groupMember']['name'].split('/')
     member['groupMember']['email'], _ = convertUIDtoEmailAddressWithType(f'uid:{memberUid}', cd, None, emailTypes=['group'])
+
+def _getChatSpaceMembers(cd, chatSpace, ciGroupName):
+  if chatSpace.startswith('space/'):
+    _, chatSpace = chatSpace.split('/', 1)
+    chatSpace = 'spaces/'+chatSpace
+  kwargsUAA = {'useAdminAccess': True, 'filter': 'member.type != "BOT"'}
+  user, chat, kvList = buildChatServiceObject(API.CHAT_MEMBERSHIPS_ADMIN, _getAdminEmail(), 0, 0, [Ent.CHAT_SPACE, chatSpace], True)
+  memberList = []
+  if not chat:
+    return memberList
+  fields = getItemFieldsFromFieldsList('memberships', [])
+  qfilter = f'{Ent.Singular(Ent.CHAT_SPACE)}: {chatSpace}, {kwargsUAA["filter"]}'
+  try:
+    members = callGAPIpages(chat.spaces().members(), 'list', 'memberships',
+                            pageMessage=_getChatPageMessage(Ent.CHAT_MEMBER, user, 0, 0, qfilter),
+                            throwReasons=[GAPI.NOT_FOUND, GAPI.INVALID_ARGUMENT, GAPI.PERMISSION_DENIED],
+                            retryReasons=GAPI.SERVICE_NOT_AVAILABLE_RETRY_REASONS,
+                            parent=chatSpace, fields=fields, pageSize=CHAT_PAGE_SIZE, **kwargsUAA)
+    for member in members:
+      _getChatMemberEmail(cd, member)
+      gmember = {}
+      if 'member' in member:
+        if member['member']['type'] == 'HUMAN':
+          _, memberUid = member['member']['name'].split('/')
+          gmember['type'] = Ent.TYPE_USER
+          email, _ = convertUIDtoEmailAddressWithType(f'uid:{memberUid}', cd, None, emailTypes=['user'])
+          role = Ent.ROLE_MANAGER if member['role'] == 'ROLE_MANAGER' else Ent.ROLE_MEMBER
+          if not ciGroupName:
+            gmember['id'] = memberUid
+            gmember['email'] = email
+            gmember['role'] = role
+            gmember['status'] = member['state']
+          else:
+            gmember['name'] = f'{ciGroupName}/memberships/{memberUid}'
+            gmember['preferredMemberKey'] = {'id': email}
+            gmember['roles'] = [{'name': role}]
+            gmember['createTime'] = member['createTime']
+          memberList.append(gmember)
+      elif 'groupMember' in member:
+        _, memberUid = member['groupMember']['name'].split('/')
+        gmember['type'] = Ent.TYPE_GROUP
+        role = Ent.ROLE_MANAGER if member['role'] == 'ROLE_MANAGER' else Ent.ROLE_MEMBER
+        email, _ = convertUIDtoEmailAddressWithType(f'uid:{memberUid}', cd, None, emailTypes=['group'])
+        if not ciGroupName:
+          gmember['id'] = memberUid
+          gmember['email'] = email
+          gmember['role'] = role
+          gmember['status'] = member['state']
+        else:
+          gmember['name'] = f'{ciGroupName}/memberships/{memberUid}'
+          gmember['preferredMemberKey'] = {'id': email}
+          gmember['roles'] = [{'name': role}]
+          gmember['createTime'] = member['createTime']
+        memberList.append(gmember)
+    return memberList
+  except (GAPI.notFound, GAPI.invalidArgument, GAPI.permissionDenied) as e:
+    exitIfChatNotConfigured(chat, kvList, str(e), 0, 0)
+    return memberList
 
 def normalizeUserMember(user, userList):
   userList.append(normalizeEmailAddressOrUID(user))
@@ -28090,10 +28176,12 @@ def updatePolicyRequests(body, targetResource, printer_id, app_id):
   for request in body['requests']:
     request.setdefault('policyTargetKey', {})
     request['policyTargetKey']['targetResource'] = targetResource
-    if app_id:
-      request['policyTargetKey']['additionalTargetKeys'] = {'app_id': app_id}
-    elif printer_id:
-      request['policyTargetKey']['additionalTargetKeys'] = {'printer_id': printer_id}
+    if app_id or printer_id:
+      request['policyTargetKey'].setdefault('additionalTargetKeys', {})
+      if app_id:
+        request['policyTargetKey']['additionalTargetKeys']['app_id'] = app_id
+      elif printer_id:
+        request['policyTargetKey']['additionalTargetKeys']['printer_id'] = printer_id
 
 # gam delete chromepolicy
 #	(<SchemaName> [<JSONData>])+
@@ -28126,9 +28214,9 @@ def doDeleteChromePolicy():
       if checkArgumentPresent('json'):
         jsonData = getJSON(['direct', 'name', 'orgUnitPath', 'parentOrgUnitPath', 'group'])
         if 'additionalTargetKeys' in jsonData:
-          body['requests'][-1].setdefault('policyTargetKey', {})
+          body['requests'][-1].setdefault('policyTargetKey', {'additionalTargetKeys': {}})
           for atk in jsonData['additionalTargetKeys']:
-            body['requests'][-1]['policyTargetKey']['additionalTargetKeys'] = {atk['name']: atk['value']}
+            body['requests'][-1]['policyTargetKey']['additionalTargetKeys'][atk['name']] = atk['value']
   checkPolicyArgs(targetResource, printer_id, app_id)
   count = len(body['requests'])
   if count != 1:
@@ -28147,75 +28235,171 @@ def doDeleteChromePolicy():
   except (GAPI.notFound, GAPI.permissionDenied, GAPI.invalidArgument, GAPI.serviceNotAvailable, GAPI.quotaExceeded) as e:
     entityActionFailedWarning(kvList, str(e))
 
-CHROME_SCHEMA_TYPE_MESSAGE = {
-  'chrome.users.AutoUpdateCheckPeriodNew':
-    {'autoupdatecheckperiodminutesnew':
-       {'casedField': 'autoUpdateCheckPeriodMinutesNew',
-        'type': 'duration', 'minVal': 1, 'maxVal': 720, 'scale': 60}},
+CHROME_SCHEMA_SPECIAL_CASES = {
   'chrome.users.AutoUpdateCheckPeriodNewV2':
     {'autoupdatecheckperiodminutesnew':
        {'casedField': 'autoUpdateCheckPeriodMinutesNew',
-        'type': 'duration', 'minVal': 1, 'maxVal': 720, 'scale': 60}},
-  'chrome.users.BrowserSwitcherDelayDuration':
-    {'browserswitcherdelayduration':
-       {'casedField': 'browserSwitcherDelayDuration',
-        'type': 'duration', 'minVal': 0, 'maxVal': 30, 'scale': 1}},
-  'chrome.users.CloudReportingUploadFrequencyV2':
-    {'cloudreportinguploadfrequency':
-       {'casedField': 'cloudReportingUploadFrequency',
-        'type': 'count', 'minVal': 3, 'maxVal': 24, 'scale': 1}},
-  'chrome.users.FetchKeepaliveDurationSecondsOnShutdown':
-    {'fetchkeepalivedurationsecondsonshutdown':
-       {'casedField': 'fetchKeepaliveDurationSecondsOnShutdown',
-        'type': 'duration', 'minVal': 0, 'maxVal': 5, 'scale': 1}},
-  'chrome.users.MaxInvalidationFetchDelay':
-    {'maxinvalidationfetchdelay':
-       {'casedField': 'maxInvalidationFetchDelay',
-        'type': 'duration', 'minVal': 1, 'maxVal': 30, 'scale': 1, 'default': 10}},
-  'chrome.users.PrintingMaxSheetsAllowed':
-    {'printingmaxsheetsallowednullable':
-       {'casedField': 'printingMaxSheetsAllowedNullable',
-        'type': 'value', 'minVal': 1, 'maxVal': None, 'scale': 1}},
-  'chrome.users.PrintJobHistoryExpirationPeriodNew':
-    {'printjobhistoryexpirationperioddaysnew':
-       {'casedField': 'printJobHistoryExpirationPeriodDaysNew',
-        'type': 'duration', 'minVal': -1, 'maxVal': None, 'scale': 86400}},
-  'chrome.users.RelaunchNotificationWithDurationV2':
-    {'relaunchnotificationperiodduration':
-       {'casedField': 'relaunchNotificationPeriodDuration',
-        'type': 'duration', 'minVal': -1, 'maxVal': None, 'scale': 3600}},
-  'chrome.users.SecurityTokenSessionSettings':
-    {'securitytokensessionnotificationseconds':
-       {'casedField': 'securityTokenSessionNotificationSeconds',
-        'type': 'duration', 'minVal': 0, 'maxVal': 9999, 'scale': 1}},
-  'chrome.users.SessionLength':
-    {'sessiondurationlimit':
-       {'casedField': 'sessionDurationLimit',
-        'type': 'duration', 'minVal': 1, 'maxVal': 1440, 'scale': 60}},
-  'chrome.users.UpdatesSuppressed':
-    {'updatessuppresseddurationmin':
-       {'casedField': 'updatesSuppressedDurationMin',
-        'type': 'count', 'minVal': 1, 'maxVal': 1440, 'scale': 1},
-     'updatessuppressedstarttime':
-       {'casedField': 'updatesSuppressedStartTime',
-        'type': 'timeOfDay'}},
-  'chrome.devices.managedguest.Avatar':
-    {'useravatarimage':
-       {'casedField': 'userAvatarImage',
-        'type': 'downloadUri'}},
-  'chrome.devices.managedguest.Wallpaper':
-    {'wallpaperimage':
-       {'casedField': 'wallpaperImage',
-        'type': 'downloadUri'}},
-  'chrome.devices.SignInWallpaperImage':
-    {'devicewallpaperimage':
-       {'casedField': 'deviceWallpaperImage',
-        'type': 'downloadUri'}},
+        'type': 'duration', 'minVal': 1, 'maxVal': 720}},
   'chrome.users.Avatar':
     {'useravatarimage':
        {'casedField': 'userAvatarImage',
         'type': 'downloadUri'}},
+  'chrome.users.BrowserSwitcherDelayDurationV2':
+    {'browserswitcherdelayduration':
+       {'casedField': 'browserSwitcherDelayDuration',
+        'type': 'duration', 'minVal': 0, 'maxVal': 30}},
+  'chrome.users.BrowsingDataLifetimeV2':
+    {'browsinghistoryttl':
+       {'casedField': 'browsingHistoryTtl',
+        'type': 'duration', 'minVal': 1, 'maxVal': None},
+     'downloadhistoryttl':
+       {'casedField': 'downloadHistoryTtl',
+        'type': 'duration', 'minVal': 1, 'maxVal': None},
+     'cookiesandothersitedatattl':
+       {'casedField': 'cookiesAndOtherSiteDataTtl',
+        'type': 'duration', 'minVal': 1, 'maxVal': None},
+     'cachedimagesandfilesttl':
+       {'casedField': 'cachedImagesAndFilesTtl',
+        'type': 'duration', 'minVal': 1, 'maxVal': None},
+     'passwordsigninttl':
+       {'casedField': 'passwordSigninTtl',
+        'type': 'duration', 'minVal': 1, 'maxVal': None},
+     'autofillttl':
+       {'casedField': 'autofillTtl',
+        'type': 'duration', 'minVal': 1, 'maxVal': None},
+     'sitesettingsttl':
+       {'casedField': 'siteSettingsTtl',
+        'type': 'duration', 'minVal': 1, 'maxVal': None},
+     'hostedappdatattl':
+       {'casedField': 'hostedAppDataTtl',
+        'type': 'duration', 'minVal': 1, 'maxVal': None}},
+  'chrome.users.CloudReportingUploadFrequencyV2':
+    {'cloudreportinguploadfrequency':
+       {'casedField': 'cloudReportingUploadFrequency',
+        'type': 'duration', 'minVal': 3, 'maxVal': 24}},
+  'chrome.users.FetchKeepaliveDurationSecondsOnShutdownV2':
+    {'fetchkeepalivedurationsecondsonshutdown':
+       {'casedField': 'fetchKeepaliveDurationSecondsOnShutdown',
+        'type': 'duration', 'minVal': 0, 'maxVal': 5}},
+  'chrome.users.MaxInvalidationFetchDelayV2':
+    {'maxinvalidationfetchdelay':
+       {'casedField': 'maxInvalidationFetchDelay',
+        'type': 'duration', 'minVal': 1, 'maxVal': 30, 'default': 10}},
+  'chrome.users.PrintingMaxSheetsAllowed':
+    {'printingmaxsheetsallowednullable':
+       {'casedField': 'printingMaxSheetsAllowedNullable',
+        'type': 'value', 'minVal': 1, 'maxVal': None}},
+  'chrome.users.PrintJobHistoryExpirationPeriodNewV2':
+    {'printjobhistoryexpirationperioddaysnew':
+       {'casedField': 'printJobHistoryExpirationPeriodDaysNew',
+        'type': 'duration', 'minVal': -1, 'maxVal': None}},
+  'chrome.users.RelaunchNotificationWithDurationV2':
+    {'relaunchnotificationperiodduration':
+       {'casedField': 'relaunchNotificationPeriodDuration',
+        'type': 'duration', 'minVal': -1, 'maxVal': None}},
+  'chrome.users.SecurityTokenSessionSettingsV2':
+    {'securitytokensessionnotificationseconds':
+       {'casedField': 'securityTokenSessionNotificationSeconds',
+        'type': 'duration', 'minVal': 0, 'maxVal': 9999}},
+  'chrome.users.SessionLengthV2':
+    {'sessiondurationlimit':
+       {'casedField': 'sessionDurationLimit',
+        'type': 'duration', 'minVal': 1, 'maxVal': 1440}},
+  'chrome.users.UpdatesSuppressed':
+    {'updatessuppresseddurationmin':
+       {'casedField': 'updatesSuppressedDurationMin',
+        'type': 'count', 'minVal': 1, 'maxVal': 1440},
+     'updatessuppressedstarttime':
+       {'casedField': 'updatesSuppressedStartTime',
+        'type': 'timeOfDay'}},
   'chrome.users.Wallpaper':
+    {'wallpaperimage':
+       {'casedField': 'wallpaperImage',
+        'type': 'downloadUri'}},
+  'chrome.devices.EnableReportUploadFrequencyV2':
+    {'reportdeviceuploadfrequency':
+       {'casedField': 'reportDeviceUploadFrequency',
+        'type': 'duration', 'minVal': 60, 'maxVal': 25379}},
+  'chrome.devices.ScheduledRebootDurationV2':
+    {'uptimelimitduration':
+       {'casedField': 'uptimeLimitDuration',
+        'type': 'duration', 'minVal': 1, 'maxVal': 365}},
+  'chrome.devices.SignInWallpaperImage':
+    {'devicewallpaperimage':
+       {'casedField': 'deviceWallpaperImage',
+        'type': 'downloadUri'}},
+  'chrome.devices.kiosk.AcPowerSettingsV2':
+    {'acidletimeout':
+       {'casedField': 'acIdleTimeout',
+        'type': 'duration', 'minVal': 1, 'maxVal': 35000},
+     'acwarningtimeout':
+       {'casedField': 'acWarningTimeout',
+        'type': 'duration', 'minVal': 0, 'maxVal': 35000},
+     'acdimtimeout':
+       {'casedField': 'acDimTimeout',
+        'type': 'duration', 'minVal': 0, 'maxVal': 35000},
+     'acscreenofftimeout':
+       {'casedField': 'acScreenOffTimeout',
+        'type': 'duration', 'minVal': 0, 'maxVal': 35000}},
+  'chrome.devices.kiosk.BatteryPowerSettingsV2':
+    {'batteryidletimeout':
+       {'casedField': 'batteryIdleTimeout',
+        'type': 'duration', 'minVal': 1, 'maxVal': 35000},
+     'batterywarningtimeout':
+       {'casedField': 'batteryWarningTimeout',
+        'type': 'duration', 'minVal': 0, 'maxVal': 35000},
+     'batterydimtimeout':
+       {'casedField': 'batteryDimTimeout',
+        'type': 'duration', 'minVal': 0, 'maxVal': 35000},
+     'batteryscreenofftimeout':
+       {'casedField': 'batteryScreenOffTimeout',
+        'type': 'duration', 'minVal': 0, 'maxVal': 35000}},
+  'chrome.devices.managedguest.Avatar':
+    {'useravatarimage':
+       {'casedField': 'userAvatarImage',
+        'type': 'downloadUri'}},
+  'chrome.devices.managedguest.BrowsingDataLifetimeV2':
+    {'browsinghistoryttl':
+       {'casedField': 'browsingHistoryTtl',
+        'type': 'duration', 'minVal': 1, 'maxVal': None},
+     'downloadhistoryttl':
+       {'casedField': 'downloadHistoryTtl',
+        'type': 'duration', 'minVal': 1, 'maxVal': None},
+     'cookiesandothersitedatattl':
+       {'casedField': 'cookiesAndOtherSiteDataTtl',
+        'type': 'duration', 'minVal': 1, 'maxVal': None},
+     'cachedimagesandfilesttl':
+       {'casedField': 'cachedImagesAndFilesTtl',
+        'type': 'duration', 'minVal': 1, 'maxVal': None},
+     'passwordsigninttl':
+       {'casedField': 'passwordSigninTtl',
+        'type': 'duration', 'minVal': 1, 'maxVal': None},
+     'autofillttl':
+       {'casedField': 'autofillTtl',
+        'type': 'duration', 'minVal': 1, 'maxVal': None},
+     'sitesettingsttl':
+       {'casedField': 'siteSettingsTtl',
+        'type': 'duration', 'minVal': 1, 'maxVal': None},
+     'hostedappdatattl':
+       {'casedField': 'hostedAppDataTtl',
+        'type': 'duration', 'minVal': 1, 'maxVal': None}},
+  'chrome.devices.managedguest.MaxInvalidationFetchDelayV2':
+    {'maxinvalidationfetchdelay':
+       {'casedField': 'maxInvalidationFetchDelay',
+        'type': 'duration', 'minVal': 1, 'maxVal': 30, 'default': 10}},
+  'chrome.devices.managedguest.PrintJobHistoryExpirationPeriodNewV2':
+    {'printjobhistoryexpirationperioddaysnew':
+       {'casedField': 'printJobHistoryExpirationPeriodDaysNew',
+        'type': 'duration', 'minVal': -1, 'maxVal': None}},
+  'chrome.devices.managedguest.SecurityTokenSessionSettingsV2':
+    {'securitytokensessionnotificationseconds':
+       {'casedField': 'securityTokenSessionNotificationSeconds',
+        'type': 'duration', 'minVal': 0, 'maxVal': 9999}},
+  'chrome.devices.managedguest.SessionLengthV2':
+    {'sessiondurationlimit':
+       {'casedField': 'sessionDurationLimit',
+        'type': 'duration', 'minVal': 1, 'maxVal': 1440}},
+  'chrome.devices.managedguest.Wallpaper':
     {'wallpaperimage':
        {'casedField': 'wallpaperImage',
         'type': 'downloadUri'}},
@@ -28230,9 +28414,7 @@ CHROME_TARGET_VERSION_PATTERN = re.compile(r'^(\d{1,4}\.){1,4}$')
 #	[(printerid <PrinterID>)|(appid <AppID>)]
 def doUpdateChromePolicy():
   def getSpecialVtypeValue(vtype, value):
-    if vtype == 'duration':
-      return {vtype: f'{value}s'}
-    if vtype in {'value', 'downloadUri'}:
+    if vtype in {'duration', 'value', 'downloadUri'}:
       return {vtype: value}
     if vtype == 'count':
       return value
@@ -28281,17 +28463,17 @@ def doUpdateChromePolicy():
           jsonData = getJSON(['direct', 'name', 'orgUnitPath', 'parentOrgUnitPath', 'group'])
           schemaNameAppId = schemaName
           if 'additionalTargetKeys' in jsonData:
-            body['requests'][-1].setdefault('policyTargetKey', {})
+            body['requests'][-1].setdefault('policyTargetKey', {'additionalTargetKeys': {}})
             for atk in jsonData['additionalTargetKeys']:
-              body['requests'][-1]['policyTargetKey']['additionalTargetKeys'] = {atk['name']: atk['value']}
+              body['requests'][-1]['policyTargetKey']['additionalTargetKeys'][atk['name']] = atk['value']
               if atk['name'] == 'app_id':
                 schemaNameAppId += f"({atk['value']})"
           schemaNameList[-1] = schemaNameAppId
           for field in jsonData.get('fields', []):
             casedField = field['name']
             lowerField = casedField.lower()
-            # Handle TYPE_MESSAGE fields with durations, values, counts and timeOfDay as special cases
-            tmschema = CHROME_SCHEMA_TYPE_MESSAGE.get(schemaName, {}).get(lowerField)
+            # Handle fields with durations, values, counts and timeOfDay as special cases
+            tmschema = CHROME_SCHEMA_SPECIAL_CASES.get(schemaName, {}).get(lowerField)
             if tmschema:
               body['requests'][-1]['policyValue']['value'][casedField] = getSpecialVtypeValue(tmschema['type'], field['value'])
               body['requests'][-1]['updateMask'] += f'{casedField},'
@@ -28327,8 +28509,8 @@ def doUpdateChromePolicy():
             body['requests'][-1]['policyValue']['value'][casedField] = value
             body['requests'][-1]['updateMask'] += f'{casedField},'
           break
-        # Handle TYPE_MESSAGE fields with durations, values, counts and timeOfDay as special cases
-        tmschema = CHROME_SCHEMA_TYPE_MESSAGE.get(schemaName, {}).get(field)
+        # Handle fields with durations, values, counts and timeOfDay as special cases
+        tmschema = CHROME_SCHEMA_SPECIAL_CASES.get(schemaName, {}).get(field)
         if tmschema:
           casedField = tmschema['casedField']
           vtype = tmschema['type']
@@ -28336,9 +28518,9 @@ def doUpdateChromePolicy():
             value = getString(Cmd.OB_STRING)
           elif vtype != 'timeOfDay':
             if 'default' not in tmschema:
-              value = getInteger(minVal=tmschema['minVal'], maxVal=tmschema['maxVal'])*tmschema['scale']
+              value = getInteger(minVal=tmschema['minVal'], maxVal=tmschema['maxVal'])
             else:
-              value = getIntegerEmptyAllowed(minVal=tmschema['minVal'], maxVal=tmschema['maxVal'], default=tmschema['default'])*tmschema['scale']
+              value = getIntegerEmptyAllowed(minVal=tmschema['minVal'], maxVal=tmschema['maxVal'], default=tmschema['default'])
           else:
             value = getHHMM()
           body['requests'][-1]['policyValue']['value'][casedField] = getSpecialVtypeValue(vtype, value)
@@ -28471,20 +28653,14 @@ def doPrintShowChromePolicies():
                 'chrome.users.apps.ManagedConfiguration'} and 'managedConfiguration' in values:
       values['managedConfiguration'] = json.dumps(values['managedConfiguration'], ensure_ascii=False).replace('\\n', '').replace('\\"', '"')[1:-1]
     for setting, value in values.items():
-      # Handle TYPE_MESSAGE fields with durations, values, counts and timeOfDay as special cases
-      schema = CHROME_SCHEMA_TYPE_MESSAGE.get(name, {}).get(setting.lower())
+      # Handle fields with durations, values, counts and timeOfDay as special cases
+      schema = CHROME_SCHEMA_SPECIAL_CASES.get(name, {}).get(setting.lower())
       if schema and setting == schema['casedField']:
         vtype = schema['type']
-        if vtype in {'duration', 'value'}:
+        if vtype in {'duration', 'value', 'downloadUri'}:
           value = value.get(vtype, '')
-          if value:
-            if value.endswith('s'):
-              value = value[:-1]
-            value = int(value) // schema['scale']
         elif vtype == 'count':
           pass
-        elif vtype == 'downloadUri':
-          value = value.get(vtype, '')
         else: #timeOfDay
           hours = value.get(vtype, {}).get('hours', 0)
           minutes = value.get(vtype, {}).get('minutes', 0)
@@ -29432,7 +29608,7 @@ DEVICE_ORDERBY_CHOICE_MAP = {
 #	<DeviceFieldName>* [fields <DeviceFieldNameList>] [userfields <DeviceUserFieldNameList>]
 #	[orderby <DeviceOrderByFieldName> [ascending|descending]]
 #	[all|company|personal|nocompanydevices|nopersonaldevices]
-#	[nodeviceusers]
+#	[nodeviceusers|oneuserperrow]
 #	[formatjson [quotechar <Character>]]
 # 	[showitemcountonly]
 def doPrintCIDevices():
@@ -29448,7 +29624,7 @@ def doPrintCIDevices():
   queries = [None]
   view, entityType = DEVICE_VIEW_CHOICE_MAP['all']
   getDeviceUsers = True
-  showItemCountOnly = False
+  oneUserPerRow = showItemCountOnly = False
   while Cmd.ArgumentsRemaining():
     myarg = getArgument()
     if csvPF and myarg == 'todrive':
@@ -29463,6 +29639,8 @@ def doPrintCIDevices():
       view, entityType = DEVICE_VIEW_CHOICE_MAP[myarg]
     elif myarg == 'nodeviceusers':
       getDeviceUsers = False
+    elif myarg in {'oneuserperrow', 'oneitemperrow'}:
+      getDeviceUsers = oneUserPerRow = True
     elif getFieldsList(myarg, DEVICE_FIELDS_CHOICE_MAP, fieldsList, initialField='name'):
       pass
     elif getFieldsList(myarg, DEVICEUSER_FIELDS_CHOICE_MAP, userFieldsList, initialField='name', fieldsArg='userfields'):
@@ -29476,6 +29654,8 @@ def doPrintCIDevices():
   fields = getItemFieldsFromFieldsList('devices', fieldsList)
   userFields = getItemFieldsFromFieldsList('deviceUsers', userFieldsList)
   substituteQueryTimes(queries, queryTimes)
+  if FJQC.formatJSON and oneUserPerRow:
+    csvPF.SetJSONTitles(['name', 'user.name', 'JSON'])
   itemCount = 0
   for query in queries:
     printGettingAllAccountEntities(entityType, query)
@@ -29517,13 +29697,26 @@ def doPrintCIDevices():
       except (GAPI.invalid, GAPI.invalidArgument, GAPI.permissionDenied) as e:
         entityActionFailedWarning([entityType, None], str(e))
     for device in devices:
-      row = flattenJSON(device, timeObjects=DEVICE_TIME_OBJECTS)
-      if not FJQC.formatJSON:
-        csvPF.WriteRowTitles(row)
-      elif csvPF.CheckRowTitles(row):
-        csvPF.WriteRowNoFilter({'name': device['name'],
-                                'JSON': json.dumps(cleanJSON(device, timeObjects=DEVICE_TIME_OBJECTS),
-                                                   ensure_ascii=False, sort_keys=True)})
+      if not oneUserPerRow or 'users' not in device:
+        row = flattenJSON(device, timeObjects=DEVICE_TIME_OBJECTS)
+        if not FJQC.formatJSON:
+          csvPF.WriteRowTitles(row)
+        elif csvPF.CheckRowTitles(row):
+          csvPF.WriteRowNoFilter({'name': device['name'],
+                                  'JSON': json.dumps(cleanJSON(device, timeObjects=DEVICE_TIME_OBJECTS),
+                                                     ensure_ascii=False, sort_keys=True)})
+      else:
+        deviceUsers = device.pop('users')
+        baserow = flattenJSON(device, timeObjects=DEVICE_TIME_OBJECTS)
+        for deviceUser in deviceUsers:
+          row = flattenJSON({'user': deviceUser}, flattened=baserow.copy(), timeObjects=DEVICE_TIME_OBJECTS)
+          if not FJQC.formatJSON:
+            csvPF.WriteRowTitles(row)
+          elif csvPF.CheckRowTitles(row):
+            device['user'] = deviceUser
+            csvPF.WriteRowNoFilter({'name': device['name'], 'user.name': deviceUser['name'],
+                                    'JSON': json.dumps(cleanJSON(device, timeObjects=DEVICE_TIME_OBJECTS),
+                                                       ensure_ascii=False, sort_keys=True)})
   if showItemCountOnly:
     writeStdout(f'{itemCount}\n')
     return
@@ -34130,15 +34323,18 @@ def getGroupMembers(cd, groupEmail, memberRoles, membersList, membersSet, i, cou
 
   printGettingAllEntityItemsForWhom(memberRoles if memberRoles else Ent.ROLE_MANAGER_MEMBER_OWNER, groupEmail, i, count)
   validRoles, listRoles, listFields = _getRoleVerification(memberRoles, 'nextPageToken,members(email,id,role,status,type,delivery_settings)')
-  try:
-    groupMembers = callGAPIpages(cd.members(), 'list', 'members',
-                                 pageMessage=getPageMessageForWhom(),
-                                 throwReasons=GAPI.MEMBERS_THROW_REASONS, retryReasons=GAPI.MEMBERS_RETRY_REASONS,
-                                 includeDerivedMembership=memberOptions[MEMBEROPTION_INCLUDEDERIVEDMEMBERSHIP],
-                                 groupKey=groupEmail, roles=listRoles, fields=listFields, maxResults=GC.Values[GC.MEMBER_MAX_RESULTS])
-  except (GAPI.groupNotFound, GAPI.domainNotFound, GAPI.domainCannotUseApis, GAPI.invalid, GAPI.forbidden, GAPI.serviceNotAvailable):
-    entityUnknownWarning(Ent.GROUP, groupEmail, i, count)
-    return
+  if not groupEmail.startswith('space/'):
+    try:
+      groupMembers = callGAPIpages(cd.members(), 'list', 'members',
+                                   pageMessage=getPageMessageForWhom(),
+                                   throwReasons=GAPI.MEMBERS_THROW_REASONS, retryReasons=GAPI.MEMBERS_RETRY_REASONS,
+                                   includeDerivedMembership=memberOptions[MEMBEROPTION_INCLUDEDERIVEDMEMBERSHIP],
+                                   groupKey=groupEmail, roles=listRoles, fields=listFields, maxResults=GC.Values[GC.MEMBER_MAX_RESULTS])
+    except (GAPI.groupNotFound, GAPI.domainNotFound, GAPI.domainCannotUseApis, GAPI.invalid, GAPI.forbidden, GAPI.serviceNotAvailable):
+      entityUnknownWarning(Ent.GROUP, groupEmail, i, count)
+      return
+  else:
+    groupMembers =  _getChatSpaceMembers(cd, groupEmail, '')
   checkCategory = memberDisplayOptions['showCategory']
   if not memberOptions[MEMBEROPTION_RECURSIVE]:
     if memberOptions[MEMBEROPTION_NODUPLICATES]:
@@ -36243,7 +36439,7 @@ def getCIGroupTransitiveMembers(ci, groupName, membersList, i, count):
   return True
 
 def getCIGroupMembers(ci, groupName, memberRoles, membersList, membersSet, i, count,
-                      memberOptions, memberDisplayOptions, level, typesSet, groupEmail, kwargs):
+                      memberOptions, memberDisplayOptions, level, typesSet, groupEmail, kwargs, cd):
   nameToPrint = groupEmail if groupEmail else groupName
   printGettingAllEntityItemsForWhom(memberRoles if memberRoles else Ent.ROLE_MANAGER_MEMBER_OWNER, nameToPrint, i, count)
   validRoles = _getCIRoleVerification(memberRoles)
@@ -36256,16 +36452,21 @@ def getCIGroupMembers(ci, groupName, memberRoles, membersList, membersSet, i, co
         if member['type'] in typesSet and checkCIMemberMatch(member, memberOptions):
           membersList.append(member)
     return
-  try:
-    groupMembers = callGAPIpages(ci.groups().memberships(), 'list', 'memberships',
-                                 pageMessage=getPageMessageForWhom(),
-                                 throwReasons=GAPI.CIGROUP_LIST_THROW_REASONS, retryReasons=GAPI.CIGROUP_RETRY_REASONS,
-                                 parent=groupName, **kwargs)
-  except (GAPI.resourceNotFound, GAPI.domainNotFound, GAPI.domainCannotUseApis,
-          GAPI.forbidden, GAPI.badRequest, GAPI.invalid, GAPI.invalidArgument, GAPI.systemError,
-          GAPI.permissionDenied, GAPI.serviceNotAvailable):
-    entityUnknownWarning(Ent.CLOUD_IDENTITY_GROUP, nameToPrint, i, count)
-    return
+  if not groupEmail.startswith('space/'):
+    try:
+      groupMembers = callGAPIpages(ci.groups().memberships(), 'list', 'memberships',
+                                   pageMessage=getPageMessageForWhom(),
+                                   throwReasons=GAPI.CIGROUP_LIST_THROW_REASONS, retryReasons=GAPI.CIGROUP_RETRY_REASONS,
+                                   parent=groupName, **kwargs)
+    except (GAPI.resourceNotFound, GAPI.domainNotFound, GAPI.domainCannotUseApis,
+            GAPI.forbidden, GAPI.badRequest, GAPI.invalid, GAPI.invalidArgument, GAPI.systemError,
+            GAPI.permissionDenied, GAPI.serviceNotAvailable):
+      entityUnknownWarning(Ent.CLOUD_IDENTITY_GROUP, nameToPrint, i, count)
+      return
+  else:
+    if cd is None:
+      cd = buildGAPIObject(API.DIRECTORY)
+    groupMembers = _getChatSpaceMembers(cd, groupEmail, groupName)
   checkCategory = memberDisplayOptions['showCategory']
   if not memberOptions[MEMBEROPTION_RECURSIVE]:
     if memberOptions[MEMBEROPTION_NODUPLICATES]:
@@ -36313,7 +36514,7 @@ def getCIGroupMembers(ci, groupName, memberRoles, membersList, membersSet, i, co
           groupMemberList.append((f'groups/{gname}', memberName))
     for member in groupMemberList:
       getCIGroupMembers(ci, member[0], memberRoles, membersList, membersSet, i, count,
-                        memberOptions, memberDisplayOptions, level+1, typesSet, member[1], kwargs)
+                        memberOptions, memberDisplayOptions, level+1, typesSet, member[1], kwargs, cd)
   else:
     for member in groupMembers:
       getCIGroupMemberRoleFixType(member)
@@ -36335,7 +36536,7 @@ def getCIGroupMembers(ci, groupName, memberRoles, membersList, membersSet, i, co
           membersList.append(member)
         _, gname = member['name'].rsplit('/', 1)
         getCIGroupMembers(ci, f'groups/{gname}', memberRoles, membersList, membersSet, i, count,
-                          memberOptions, memberDisplayOptions, level+1, typesSet, memberName, kwargs)
+                          memberOptions, memberDisplayOptions, level+1, typesSet, memberName, kwargs, cd)
 
 CIGROUPMEMBERS_FIELDS_CHOICE_MAP = {
   'createtime': 'createTime',
@@ -36499,7 +36700,7 @@ def doPrintCIGroupMembers():
     membersList = []
     membersSet = set()
     getCIGroupMembers(ci, groupEntity['name'], getRoles, membersList, membersSet, i, count,
-                      memberOptions, memberDisplayOptions, level, typesSet, groupEmail, kwargs)
+                      memberOptions, memberDisplayOptions, level, typesSet, groupEmail, kwargs, None)
     if showOwnedBy and not checkCIGroupShowOwnedBy(showOwnedBy, membersList):
       continue
     for member in membersList:
@@ -38461,7 +38662,8 @@ def _getCalendarListEventsDisplayProperty(myarg, calendarEventEntity):
 
 def initCalendarEventEntity():
   return {'list': [], 'queries': [], 'kwargs': {}, 'dict': None,
-          'matches': [], 'maxinstances': -1, 'countsOnly': False, 'showDayOfWeek': False}
+          'matches': [], 'maxinstances': -1, 'showDayOfWeek': False,
+          'countsOnly': False, 'eventRowFilter': False, 'countsOnlyTitles': []}
 
 def getCalendarEventEntity():
   calendarEventEntity = initCalendarEventEntity()
@@ -39123,7 +39325,8 @@ def _updateCalendarEvents(origUser, user, origCal, calIds, count, calendarEventE
       try:
         if updateFieldList:
           event = callGAPI(cal.events(), 'get',
-                           throwReasons=GAPI.CALENDAR_THROW_REASONS+[GAPI.NOT_FOUND, GAPI.DELETED, GAPI.FORBIDDEN],
+                           throwReasons=GAPI.CALENDAR_THROW_REASONS+[GAPI.NOT_FOUND, GAPI.DELETED, GAPI.FORBIDDEN, GAPI.BACKEND_ERROR],
+                           retryReasons=GAPI.SERVICE_NOT_AVAILABLE_RETRY_REASONS+[GAPI.BACKEND_ERROR],
                            calendarId=calId, eventId=eventId, fields=updateFields)
           if 'description' in updateFieldList and 'description' in event:
             body['description'] = event['description']
@@ -39153,10 +39356,11 @@ def _updateCalendarEvents(origUser, user, origCal, calIds, count, calendarEventE
             if parameters['clearResources']:
               body['attendees'] = [attendee for attendee in body['attendees'] if not attendee['email'].lower().endswith('@resource.calendar.google.com')]
         event = callGAPI(cal.events(), 'patch',
-                         throwReasons=GAPI.CALENDAR_THROW_REASONS+[GAPI.NOT_FOUND, GAPI.DELETED, GAPI.FORBIDDEN,
+                         throwReasons=GAPI.CALENDAR_THROW_REASONS+[GAPI.NOT_FOUND, GAPI.DELETED, GAPI.FORBIDDEN, GAPI.BACKEND_ERROR,
                                                                    GAPI.INVALID, GAPI.REQUIRED, GAPI.TIME_RANGE_EMPTY, GAPI.EVENT_DURATION_EXCEEDS_LIMIT,
                                                                    GAPI.REQUIRED_ACCESS_LEVEL, GAPI.CANNOT_CHANGE_ORGANIZER_OF_INSTANCE,
-                                                                   GAPI.MALFORMED_WORKING_LOCATION_EVENT],
+                                                                   GAPI.MALFORMED_WORKING_LOCATION_EVENT, GAPI.EVENT_TYPE_RESTRICTION, GAPI.BAD_REQUEST],
+                         retryReasons=GAPI.SERVICE_NOT_AVAILABLE_RETRY_REASONS+[GAPI.BACKEND_ERROR],
                          calendarId=calId, eventId=eventId, conferenceDataVersion=1, sendUpdates=parameters['sendUpdates'], supportsAttachments=True,
                          body=body, fields=pfields)
         if parameters['csvPF'] is None:
@@ -39170,8 +39374,9 @@ def _updateCalendarEvents(origUser, user, origCal, calIds, count, calendarEventE
           entityUnknownWarning(Ent.CALENDAR, calId, j, jcount)
           break
         entityActionFailedWarning([Ent.CALENDAR, calId, Ent.EVENT, eventId], str(e), j, jcount)
-      except (GAPI.forbidden, GAPI.invalid, GAPI.required, GAPI.timeRangeEmpty, GAPI.eventDurationExceedsLimit,
-              GAPI.requiredAccessLevel, GAPI.cannotChangeOrganizerOfInstance, GAPI.malformedWorkingLocationEvent) as e:
+      except (GAPI.forbidden, GAPI.backendError, GAPI.invalid, GAPI.required, GAPI.timeRangeEmpty, GAPI.eventDurationExceedsLimit,
+              GAPI.requiredAccessLevel, GAPI.cannotChangeOrganizerOfInstance, GAPI.malformedWorkingLocationEvent,
+              GAPI.eventTypeRestriction, GAPI.badRequest) as e:
         entityActionFailedWarning([Ent.CALENDAR, calId, Ent.EVENT, eventId], str(e), j, jcount)
       except GAPI.notACalendarUser:
         userCalServiceNotEnabledWarning(calId, i, count)
@@ -39506,11 +39711,25 @@ def _printShowCalendarEvents(origUser, user, origCal, calIds, count, calendarEve
         elif GC.Values[GC.CSV_OUTPUT_USERS_AUDIT] and user:
           csvPF.WriteRowNoFilter({'calendarId': calId, 'primaryEmail': user, 'id': ''})
       else:
+        if calendarEventEntity['eventRowFilter']:
+          jcount = 0
+          for event in events:
+            if calendarEventEntity['showDayOfWeek']:
+              _getEventDaysOfWeek(event)
+            row = {'calendarId': calId, 'id': event['id']}
+            if user:
+              row['primaryEmail'] = user
+            flattenJSON(event, flattened=row, timeObjects=EVENT_TIME_OBJECTS)
+            if csvPF.CheckRowTitles(row):
+              jcount += 1
         row = {'calendarId': calId}
         if user:
           row['primaryEmail'] = user
         row['events'] = jcount
-        csvPF.WriteRow(row)
+        if not calendarEventEntity['eventRowFilter']:
+          csvPF.WriteRow(row)
+        else:
+          csvPF.WriteRowNoFilter(row)
 
 EVENT_FIELDS_CHOICE_MAP = {
   'anyonecanaddself': 'anyoneCanAddSelf',
@@ -39748,13 +39967,17 @@ def _getCalendarPrintShowEventOptions(calendarEventEntity, entityType):
       calendarEventEntity['countsOnly'] = True
     elif myarg == 'showdayofweek':
       calendarEventEntity['showDayOfWeek'] = True
+    elif myarg == 'eventrowfilter':
+      calendarEventEntity['eventRowFilter'] = True
     else:
       FJQC.GetFormatJSONQuoteChar(myarg, True)
-  if calendarEventEntity['countsOnly']:
+  if calendarEventEntity['countsOnly'] and not calendarEventEntity['eventRowFilter']:
     fieldsList = ['id']
   if csvPF:
     if calendarEventEntity['countsOnly']:
+      csvPF.RemoveTitles(['id'])
       csvPF.AddTitles(['events'])
+      calendarEventEntity['countsOnlyTitles'] = csvPF.titlesList[:]
     elif not FJQC.formatJSON and not fieldsList:
       csvPF.AddSortTitles(EVENT_PRINT_ORDER)
   _addEventEntitySelectFields(calendarEventEntity, fieldsList)
@@ -39762,17 +39985,23 @@ def _getCalendarPrintShowEventOptions(calendarEventEntity, entityType):
 
 # gam calendars <CalendarEntity> print events <EventEntity> <EventDisplayProperties>*
 #	[fields <EventFieldNameList>] [showdayofweek]
-#	[countsonly] [formatjson [quotechar <Character>]] [todrive <ToDriveAttribute>*]
+#	[countsonly [eventrowfilter]]
+#	[formatjson [quotechar <Character>]] [todrive <ToDriveAttribute>*]
 # gam calendars <CalendarEntity> show events <EventEntity> <EventDisplayProperties>*
 #	[fields <EventFieldNameList>] [showdayofweek]
-#	[countsonly] [formatjson]
+#	[countsonly]
+#	[formatjson]
 def doCalendarsPrintShowEvents(calIds):
   calendarEventEntity = getCalendarEventEntity()
   csvPF, FJQC, fieldsList = _getCalendarPrintShowEventOptions(calendarEventEntity, Ent.CALENDAR)
   _printShowCalendarEvents(None, None, None, calIds, len(calIds), calendarEventEntity,
                            csvPF, FJQC, fieldsList)
   if csvPF:
-    csvPF.writeCSVfile('Calendar Events')
+    if calendarEventEntity['countsOnly'] and calendarEventEntity['eventRowFilter']:
+      csvPF.SetTitles(calendarEventEntity['countsOnlyTitles'])
+      csvPF.writeCSVfile('Calendar Events', True)
+    else:
+      csvPF.writeCSVfile('Calendar Events')
 
 # <CalendarSettings> ::==
 #	[description <String>] [location <String>] [summary <String>] [timezone <TimeZone>]
@@ -40614,6 +40843,8 @@ def _showVaultExport(matterNameId, export, cd, FJQC, k=0, kcount=0):
 VAULT_SEARCH_METHODS_MAP = {
   'account': 'ACCOUNT',
   'accounts': 'ACCOUNT',
+  'chatspace': 'ROOM',
+  'chatspaces': 'ROOM',
   'entireorg': 'ENTIRE_ORG',
   'everyone': 'ENTIRE_ORG',
   'org': 'ORG_UNIT',
@@ -40645,6 +40876,11 @@ VAULT_RESPONSE_STATUS_MAP = {
   'declined': 'ATTENDEE_RESPONSE_DECLINED',
   'needsaction': 'ATTENDEE_RESPONSE_NEEDS_ACTION',
   'tentative': 'ATTENDEE_RESPONSE_TENTATIVE',
+  }
+VAULT_SHARED_DRIVES_OPTION_MAP = {
+  'included': 'INCLUDED',
+  'includedifaccountisnotamember': 'INCLUDED_IF_ACCOUNT_IS_NOT_A_MEMBER',
+  'notincluded': 'NOT_INCLUDED',
   }
 VAULT_VOICE_COVERED_DATA_MAP = {
   'calllogs': 'CALL_LOGS',
@@ -40704,7 +40940,7 @@ VAULT_QUERY_ARGS = [
 # calendar
   'locationquery', 'peoplequery', 'minuswords', 'responsestatuses', 'caldendarversiondate',
 # drive
-  'driveclientsideencryption', 'driveversiondate', 'includeshareddrives', 'includeteamdrives',
+  'driveclientsideencryption', 'driveversiondate', 'includeshareddrives', 'includeteamdrives', 'shareddrivesoption',
 # hangoutsChat
   'includerooms',
 # mail
@@ -40714,6 +40950,12 @@ VAULT_QUERY_ARGS = [
   ] + list(VAULT_SEARCH_METHODS_MAP.keys())
 
 def _buildVaultQuery(myarg, query, corpusArgumentMap):
+  def _getQueryList(obNameList):
+    itemList = getString(obNameList)
+    if itemList != 'select':
+      return itemList.replace(',', ' ').split()
+    return getEntityList(obNameList)
+
   if not query:
     query['dataScope'] = 'ALL_DATA'
   if myarg == 'corpus':
@@ -40729,11 +40971,15 @@ def _buildVaultQuery(myarg, query, corpusArgumentMap):
     elif searchMethod == 'ORG_UNIT':
       query['orgUnitInfo'] = {'orgUnitId': getOrgUnitId()[1]}
     elif searchMethod == 'SHARED_DRIVE':
-      query['sharedDriveInfo'] = {'sharedDriveIds': getString(Cmd.OB_SHAREDDRIVE_ID_LIST).replace(',', ' ').split()}
+      query['sharedDriveInfo'] = {'sharedDriveIds': _getQueryList(Cmd.OB_SHAREDDRIVE_ID_LIST)}
     elif searchMethod == 'ROOM':
-      query['hangoutsChatInfo'] = {'roomId': getString(Cmd.OB_ROOM_LIST).replace(',', ' ').split()}
+      roomIds = _getQueryList(Cmd.OB_CHAT_SPACE_LIST)
+      for i, roomId in enumerate(roomIds):
+        if roomId.startswith('spaces/') or roomId.startswith('space/'):
+          _, roomIds[i] = roomId.split('/', 1)
+      query['hangoutsChatInfo'] = {'roomId': roomIds}
     elif searchMethod == 'SITES_URL':
-      query['sitesUrlInfo'] = {'urls': getString(Cmd.OB_URL_LIST).replace(',', ' ').split()}
+      query['sitesUrlInfo'] = {'urls': _getQueryList(Cmd.OB_URL_LIST)}
   elif myarg == 'scope':
     query['dataScope'] = getChoice(VAULT_EXPORT_DATASCOPE_MAP, mapChoice=True)
   elif myarg == 'terms':
@@ -40764,7 +41010,9 @@ def _buildVaultQuery(myarg, query, corpusArgumentMap):
   elif myarg == 'driveversiondate':
     query.setdefault('driveOptions', {})['versionDate'] = getTimeOrDeltaFromNow()
   elif myarg in {'includeshareddrives', 'includeteamdrives'}:
-    query.setdefault('driveOptions', {})['includeSharedDrives'] = getBoolean()
+    query.setdefault('driveOptions', {})['sharedDrivesOption'] = 'INCLUDED' if getBoolean() else 'INCLUDED_IF_ACCOUNT_IS_NOT_A_MEMBER'
+  elif myarg == 'shareddrivesoption':
+    query.setdefault('driveOptions', {})['sharedDrivesOption'] = getChoice(VAULT_SHARED_DRIVES_OPTION_MAP, mapChoice=True)
   elif myarg == 'driveclientsideencryption':
     query.setdefault('driveOptions', {})['clientSideEncryptedOption'] = getChoice(VAULT_CSE_OPTION_MAP, mapChoice=True)
 # hangoutsChat
@@ -40791,12 +41039,15 @@ def _validateVaultQuery(body, corpusArgumentMap):
 
 # gam create vaultexport|export matter <MatterItem> [name <String>] corpus calendar|drive|gemini|groups|hangouts_chat|mail|voice
 #	(accounts <EmailAddressEntity>) | (orgunit|org|ou <OrgUnitPath>) | everyone
-#	(shareddrives|teamdrives <TeamDriveIDList>) | (rooms <RoomList>) | (sitesurl <URLList>)
+#	(shareddrives|teamdrives (<SharedDriveIDList>|(select <FileSelector>|<CSVFileSelector>))) |
+#	    (rooms (<ChatSpaceList>|(select <FileSelector>|<CSVFileSelector>))) |
+#	    (sitesurl (<URLList>||(select <FileSelector>|<CSVFileSelector>)))
 #	[scope <all_data|held_data|unprocessed_data>]
 #	[terms <String>] [start|starttime <Date>|<Time>] [end|endtime <Date>|<Time>] [timezone <TimeZone>]
 #	[locationquery <StringList>] [peoplequery <StringList>] [minuswords <StringList>]
 #	[responsestatuses <AttendeeStatus>(,<AttendeeStatus>)*] [calendarversiondate <Date>|<Time>]
-#	[includeshareddrives <Boolean>] [driveversiondate <Date>|<Time>] [includeaccessinfo <Boolean>]
+#	[(includeshareddrives <Boolean>)|(shareddrivesoption included|included_if_account_is_not_a_member|not_included)]
+#	[driveversiondate <Date>|<Time>] [includeaccessinfo <Boolean>]
 #	[driveclientsideencryption any|encrypted|unencrypted]
 #	[includerooms <Boolean>]
 #	[excludedrafts <Boolean>] [mailclientsideencryption any|encrypted|unencrypted]
@@ -40867,7 +41118,7 @@ def doCreateVaultExport():
   try:
     export = callGAPI(v.matters().exports(), 'create',
                       throwReasons=[GAPI.ALREADY_EXISTS, GAPI.BAD_REQUEST, GAPI.BACKEND_ERROR, GAPI.INVALID_ARGUMENT,
-                                    GAPI.INVALID, GAPI.FAILED_PRECONDITION, GAPI.FORBIDDEN, GAPI.QUOTA_EXCEEDED],
+                                    GAPI.INVALID, GAPI.FAILED_PRECONDITION, GAPI.FORBIDDEN, GAPI.QUOTA_EXCEEDED, GAPI.NOT_FOUND],
                       matterId=matterId, body=body)
     if not returnIdOnly:
       entityActionPerformed([Ent.VAULT_MATTER, matterNameId, Ent.VAULT_EXPORT, formatVaultNameId(export['name'], export['id'])])
@@ -40876,7 +41127,7 @@ def doCreateVaultExport():
     else:
       writeStdout(f'{export["id"]}\n')
   except (GAPI.alreadyExists, GAPI.badRequest, GAPI.backendError, GAPI.invalidArgument,
-          GAPI.invalid, GAPI.failedPrecondition, GAPI.forbidden, GAPI.quotaExceeded) as e:
+          GAPI.invalid, GAPI.failedPrecondition, GAPI.forbidden, GAPI.quotaExceeded, GAPI.notFound) as e:
     entityActionFailedWarning([Ent.VAULT_MATTER, matterNameId, Ent.VAULT_EXPORT, body.get('name')], str(e))
 
 # gam delete vaultexport|export <ExportItem> matter <MatterItem>
@@ -41390,7 +41641,7 @@ def _setHoldQuery(body, queryParameters):
 #	[terms <String>] [start|starttime <Date>|<Time>] [end|endtime <Date>|<Time>]
 #	[includerooms <Boolean>]
 #	[covereddata calllogs|textmessages|voicemails]
-#	[includeshareddrives|includeteamdrives <Boolean>]
+#	[includeshareddrives <Boolean>]
 #	[showdetails|returnidonly]
 def doCreateVaultHold():
   v = buildGAPIObject(API.VAULT)
@@ -41456,7 +41707,7 @@ def doCreateVaultHold():
 #	[terms <String>] [start|starttime <Date>|<Time>] [end|endtime <Date>|<Time>]
 #	[includerooms <Boolean>]
 #	[covereddata calllogs|textmessages|voicemails]
-#	[includeshareddrives|includeteamdrives <Boolean>]
+#	[includeshareddrives <Boolean>]
 #	[showdetails]
 def doUpdateVaultHold():
   v = buildGAPIObject(API.VAULT)
@@ -41838,22 +42089,21 @@ def printShowUserVaultHolds(entityList):
   else:
     printKeyValueList(['Total Holds', totalHolds])
 
-def _cleanVaultQuery(query, cd):
+def _cleanVaultQuery(query, cd, drive):
   if 'query' in query:
-    if cd is not None:
-      if 'orgUnitInfo' in query['query']:
-        query['query']['orgUnitInfo']['orgUnitPath'] = convertOrgUnitIDtoPath(cd, query['query']['orgUnitInfo']['orgUnitId'])
-      if 'sharedDriveInfo' in query['query']:
-        query['query']['sharedDriveInfo']['sharedDriveNames'] = []
-        for sharedDriveId in query['query']['sharedDriveInfo']['sharedDriveIds']:
-          query['query']['sharedDriveInfo']['sharedDriveNames'].append(_getSharedDriveNameFromId(sharedDriveId))
+    if cd is not None and 'orgUnitInfo' in query['query']:
+      query['query']['orgUnitInfo']['orgUnitPath'] = convertOrgUnitIDtoPath(cd, query['query']['orgUnitInfo']['orgUnitId'])
+    if drive is not None and 'sharedDriveInfo' in query['query']:
+      query['query']['sharedDriveInfo']['sharedDriveNames'] = []
+      for sharedDriveId in query['query']['sharedDriveInfo']['sharedDriveIds']:
+        query['query']['sharedDriveInfo']['sharedDriveNames'].append(_getSharedDriveNameFromId(drive, sharedDriveId, False))
     query['query'].pop('searchMethod', None)
     query['query'].pop('teamDriveInfo', None)
 
 VAULT_QUERY_TIME_OBJECTS = {'createTime', 'endTime', 'startTime', 'versionDate'}
 
-def _showVaultQuery(matterNameId, query, cd, FJQC, k=0, kcount=0):
-  _cleanVaultQuery(query, cd)
+def _showVaultQuery(matterNameId, query, cd, drive, FJQC, k=0, kcount=0):
+  _cleanVaultQuery(query, cd, drive)
   if FJQC is not None and FJQC.formatJSON:
     printLine(json.dumps(cleanJSON(query, timeObjects=VAULT_QUERY_TIME_OBJECTS), ensure_ascii=False, sort_keys=False))
     return
@@ -41885,7 +42135,7 @@ def doInfoVaultQuery():
     queryId, queryName, queryNameId = convertQueryNameToID(v, getString(Cmd.OB_QUERY_ITEM), matterId, matterNameId)
   else:
     queryName = getString(Cmd.OB_QUERY_ITEM)
-  cd = None
+  cd = drive = None
   fieldsList = []
   FJQC = FormatJSONQuoteChar()
   while Cmd.ArgumentsRemaining():
@@ -41895,8 +42145,8 @@ def doInfoVaultQuery():
       queryId, queryName, queryNameId = convertQueryNameToID(v, queryName, matterId, matterNameId)
     elif myarg == 'shownames':
       cd = buildGAPIObject(API.DIRECTORY)
-      _, GM.Globals[GM.ADMIN_DRIVE] = buildGAPIServiceObject(API.DRIVE3, _getAdminEmail())
-      if GM.Globals[GM.ADMIN_DRIVE] is None:
+      _, drive = buildGAPIServiceObject(API.DRIVE3, _getAdminEmail())
+      if drive is None:
         return
     elif getFieldsList(myarg, VAULT_QUERY_FIELDS_CHOICE_MAP, fieldsList, initialField=['savedQueryId', 'displayName']):
       pass
@@ -41907,7 +42157,7 @@ def doInfoVaultQuery():
     query = callGAPI(v.matters().savedQueries(), 'get',
                     throwReasons=[GAPI.NOT_FOUND, GAPI.BAD_REQUEST, GAPI.FORBIDDEN, GAPI.INVALID_ARGUMENT],
                     matterId=matterId, savedQueryId=queryId, fields=fields)
-    _showVaultQuery(matterNameId, query, cd, FJQC)
+    _showVaultQuery(matterNameId, query, cd, drive, FJQC)
   except (GAPI.notFound, GAPI.badRequest, GAPI.forbidden, GAPI.invalidArgument) as e:
     entityActionFailedWarning([Ent.VAULT_MATTER, matterNameId, Ent.VAULT_QUERY, queryNameId], str(e))
 
@@ -41924,7 +42174,7 @@ def doPrintShowVaultQueries():
   csvPF = CSVPrintFile(PRINT_VAULT_QUERIES_TITLES, 'sortall') if Act.csvFormat() else None
   FJQC = FormatJSONQuoteChar(csvPF)
   matters = []
-  cd = None
+  cd = drive = None
   fieldsList = []
   while Cmd.ArgumentsRemaining():
     myarg = getArgument()
@@ -41934,8 +42184,8 @@ def doPrintShowVaultQueries():
       matters = shlexSplitList(getString(Cmd.OB_MATTER_ITEM_LIST))
     elif myarg == 'shownames':
       cd = buildGAPIObject(API.DIRECTORY)
-      _, GM.Globals[GM.ADMIN_DRIVE] = buildGAPIServiceObject(API.DRIVE3, _getAdminEmail())
-      if GM.Globals[GM.ADMIN_DRIVE] is None:
+      _, drive = buildGAPIServiceObject(API.DRIVE3, _getAdminEmail())
+      if drive is None:
         return
     elif getFieldsList(myarg, VAULT_QUERY_FIELDS_CHOICE_MAP, fieldsList, initialField=['savedQueryId', 'displayName']):
       pass
@@ -41997,11 +42247,11 @@ def doPrintShowVaultQueries():
       k = 0
       for query in queries:
         k += 1
-        _showVaultQuery(matterNameId, query, cd, FJQC, k, kcount)
+        _showVaultQuery(matterNameId, query, cd, drive, FJQC, k, kcount)
       Ind.Decrement()
     else:
       for query in queries:
-        _cleanVaultQuery(query, cd)
+        _cleanVaultQuery(query, cd, drive)
         row = flattenJSON(query, flattened={'matterId': matterId, 'matterName': matterName}, timeObjects=VAULT_QUERY_TIME_OBJECTS)
         if not FJQC.formatJSON:
           csvPF.WriteRowTitles(row)
@@ -42349,6 +42599,9 @@ PRINT_VAULT_COUNTS_TITLES = ['account', 'count', 'error']
 # gam print vaultcounts [todrive <ToDriveAttributes>*]
 #	matter <MatterItem> corpus mail|groups
 #	(accounts <EmailAddressEntity>) | (orgunit|org|ou <OrgUnitPath>) | everyone
+#	(shareddrives|teamdrives (<SharedDriveIDList>|(select <FileSelector>|<CSVFileSelector>))) |
+#	    (rooms (<ChatSpaceList>|(select <FileSelector>|<CSVFileSelector>))) |
+#	    (sitesurl (<URLList>||(select <FileSelector>|<CSVFileSelector>)))
 #	[scope <all_data|held_data|unprocessed_data>]
 #	[terms <String>] [start|starttime <Date>|<Time>] [end|endtime <Date>|<Time>] [timezone <TimeZone>]
 #	[excludedrafts <Boolean>]
@@ -51223,10 +51476,12 @@ def infoCalendarEvents(users):
 
 # gam <UserTypeEntity> print events <UserCalendarEntity> <EventEntity> <EventDisplayProperties>*
 #	[fields <EventFieldNameList>] [showdayofweek]
-#	[countsonly] [formatjson [quotechar <Character>]] [todrive <ToDriveAttribute>*]
+#	[countsonly [eventrowfilter]]
+#	[formatjson [quotechar <Character>]] [todrive <ToDriveAttribute>*]
 # gam <UserTypeEntity> show events <UserCalendarEntity> <EventEntity> <EventDisplayProperties>*
 #	[fields <EventFieldNameList>] [showdayofweek]
-#	[countsonly] [formatjson]
+#	[countsonly]]
+#	[formatjson]
 def printShowCalendarEvents(users):
   calendarEntity = getUserCalendarEntity()
   calendarEventEntity = getCalendarEventEntity()
@@ -51244,7 +51499,11 @@ def printShowCalendarEvents(users):
                              csvPF, FJQC, fieldsList)
     Ind.Decrement()
   if csvPF:
-    csvPF.writeCSVfile('Calendar Events')
+    if calendarEventEntity['countsOnly'] and calendarEventEntity['eventRowFilter']:
+      csvPF.SetTitles(calendarEventEntity['countsOnlyTitles'])
+      csvPF.writeCSVfile('Calendar Events', True)
+    else:
+      csvPF.writeCSVfile('Calendar Events')
 
 def getStatusEventDateTime(dateType, dateList):
   if dateType == 'timerange':
@@ -52255,20 +52514,15 @@ def _convertSharedDriveNameToId(drive, user, i, count, fileIdEntity, useDomainAd
                                                                  ','.join([td['id'] for td in tdlist])), i, count)
   return False
 
-def _getSharedDriveNameFromId(sharedDriveId):
+def _getSharedDriveNameFromId(drive, sharedDriveId, useDomainAdminAccess=False):
   sharedDriveName = GM.Globals[GM.MAP_SHAREDDRIVE_ID_TO_NAME].get(sharedDriveId)
   if not sharedDriveName:
-    if not GM.Globals[GM.ADMIN_DRIVE]:
-      _, GM.Globals[GM.ADMIN_DRIVE] = buildGAPIServiceObject(API.DRIVE3, _getAdminEmail())
-    if GM.Globals[GM.ADMIN_DRIVE]:
-      try:
-        sharedDriveName = callGAPI(GM.Globals[GM.ADMIN_DRIVE].drives(), 'get',
-                                   throwReasons=GAPI.DRIVE_USER_THROW_REASONS+[GAPI.NOT_FOUND],
-                                   useDomainAdminAccess=True,
-                                   driveId=sharedDriveId, fields='name')['name']
-      except (GAPI.notFound, GAPI.serviceNotAvailable, GAPI.authError, GAPI.domainPolicy):
-        sharedDriveName = TEAM_DRIVE
-    else:
+    try:
+      sharedDriveName = callGAPI(drive.drives(), 'get',
+                                 throwReasons=GAPI.DRIVE_USER_THROW_REASONS+[GAPI.NOT_FOUND],
+                                 useDomainAdminAccess=useDomainAdminAccess,
+                                 driveId=sharedDriveId, fields='name')['name']
+    except (GAPI.notFound, GAPI.serviceNotAvailable, GAPI.authError, GAPI.domainPolicy):
       sharedDriveName = TEAM_DRIVE
     GM.Globals[GM.MAP_SHAREDDRIVE_ID_TO_NAME][sharedDriveId] = sharedDriveName
   return sharedDriveName
@@ -52281,7 +52535,7 @@ def _getDriveFileNameFromId(drive, fileId, combineTitleId=True, useDomainAdminAc
     if result:
       fileName = result['name']
       if (result['mimeType'] == MIMETYPE_GA_FOLDER) and result.get('driveId') and (result['name'] == TEAM_DRIVE):
-        fileName = _getSharedDriveNameFromId(result['driveId'])
+        fileName = _getSharedDriveNameFromId(drive, result['driveId'])
       if combineTitleId:
         fileName += '('+fileId+')'
       return (fileName, _getEntityMimeType(result), result['mimeType'])
@@ -53363,7 +53617,7 @@ def getFilePaths(drive, fileTree, initialResult, filePathInfo, addParentsToTree=
                  fullpath=False, showDepth=False, folderPathOnly=False):
   def _getParentName(result):
     if (result['mimeType'] == MIMETYPE_GA_FOLDER) and result.get('driveId') and (result['name'] == TEAM_DRIVE):
-      parentName = _getSharedDriveNameFromId(result['driveId'])
+      parentName = _getSharedDriveNameFromId(drive, result['driveId'])
       if parentName != TEAM_DRIVE:
         return f'{SHARED_DRIVES}{filePathInfo["delimiter"]}{parentName}'
     return result['name']
@@ -54062,9 +54316,9 @@ def showFileInfo(users):
         driveId = result.get('driveId')
         if driveId:
           if result['mimeType'] == MIMETYPE_GA_FOLDER and result['name'] == TEAM_DRIVE:
-            result['name'] = _getSharedDriveNameFromId(driveId)
+            result['name'] = _getSharedDriveNameFromId(drive, driveId)
           if DFF.showSharedDriveNames:
-            result['driveName'] = _getSharedDriveNameFromId(driveId)
+            result['driveName'] = _getSharedDriveNameFromId(drive, driveId)
         if showNoParents:
           result.setdefault('parents', [])
         if getPermissionsForSharedDrives and driveId and 'permissions' not in result:
@@ -54752,7 +55006,7 @@ def extendFileTreeParents(drive, fileTree, fields):
           result['parents'] = [ORPHANS] if result.get('ownedByMe', False) and 'sharedWithMeTime' not in result else [SHARED_WITHME]
         else:
           if result['name'] == TEAM_DRIVE:
-            result['name'] = _getSharedDriveNameFromId(result['driveId'])
+            result['name'] = _getSharedDriveNameFromId(drive, result['driveId'])
           result['parents'] = [SHARED_DRIVES] if 'sharedWithMeTime' not in result else [SHARED_WITHME]
       fileTree[fileId]['info'] = result
       fileTree[fileId]['info']['noDisplay'] = True
@@ -55497,7 +55751,7 @@ def printFileList(users):
     if not pmselect and 'permissions' in fileInfo:
       fileInfo['permissions'] = DLP.GetFileMatchingPermission(fileInfo)
     if DFF.showSharedDriveNames and driveId:
-      fileInfo['driveName'] = _getSharedDriveNameFromId(driveId)
+      fileInfo['driveName'] = _getSharedDriveNameFromId(drive, driveId)
     if filepath:
       if not FJQC.formatJSON or not addPathsToJSON:
         addFilePathsToRow(drive, fileTree, fileInfo, filePathInfo, csvPF, row,
@@ -56020,6 +56274,7 @@ def printFileList(users):
             summaryMimeTypeInfo[mimeType]['size'] += mtinfo['size']
         if summary != FILECOUNT_SUMMARY_ONLY:
           writeMimeTypeCountsRow(user, 'Various', 'Various', mimeTypeInfo)
+  titlePrefix = f'{Cmd.Argument(GM.Globals[GM.ENTITY_CL_START])} {Cmd.Argument(GM.Globals[GM.ENTITY_CL_START]+1)} ' if GM.Globals[GM.CSVFILE][GM.REDIRECT_QUEUE] is None else ''
   if not countsOnly:
     if not csvPF.rows:
       setSysExitRC(NO_ENTITIES_FOUND_RC)
@@ -56028,22 +56283,14 @@ def printFileList(users):
     else:
       if 'JSON' in csvPF.JSONtitlesList:
         csvPF.MoveJSONTitlesToEnd(['JSON'])
-    if GM.Globals[GM.CSVFILE][GM.REDIRECT_QUEUE] is None:
-      csvPF.writeCSVfile(f'{Cmd.Argument(GM.Globals[GM.ENTITY_CL_START])} {Cmd.Argument(GM.Globals[GM.ENTITY_CL_START]+1)} Drive Files')
-    else:
-      csvPF.writeCSVfile('Drive Files')
+    csvPF.writeCSVfile(f'{titlePrefix}Drive Files')
   else:
     if not csvPFco.rows:
       setSysExitRC(NO_ENTITIES_FOUND_RC)
     if summary != FILECOUNT_SUMMARY_NONE:
       writeMimeTypeCountsRow(summaryUser, 'Various', 'Various', summaryMimeTypeInfo)
     csvPFco.todrive = csvPF.todrive
-    if not countsRowFilter:
-      csvPFco.SetRowFilter([], GC.Values[GC.CSV_OUTPUT_ROW_FILTER_MODE])
-    if GM.Globals[GM.CSVFILE][GM.REDIRECT_QUEUE] is None:
-      csvPFco.writeCSVfile(f'{Cmd.Argument(GM.Globals[GM.ENTITY_CL_START])} {Cmd.Argument(GM.Globals[GM.ENTITY_CL_START]+1)} Drive File Counts')
-    else:
-      csvPFco.writeCSVfile('Drive File Counts')
+    csvPFco.writeCSVfile(f'{titlePrefix}Drive File Counts', not countsRowFilter)
 
 FILECOMMENTS_FIELDS_CHOICE_MAP = {
   'action': 'action',
@@ -56374,7 +56621,7 @@ def printShowFilePaths(users):
         driveId = result.get('driveId')
         if driveId:
           if result['mimeType'] == MIMETYPE_GA_FOLDER and result['name'] == TEAM_DRIVE:
-            result['name'] = _getSharedDriveNameFromId(driveId)
+            result['name'] = _getSharedDriveNameFromId(drive, driveId)
             if returnPathOnly:
               if fullpath:
                 writeStdout(f'{SHARED_DRIVES}/{result["name"]}\n')
@@ -56464,7 +56711,7 @@ def printFileParentTree(users):
               driveId = result.get('driveId')
               if driveId:
                 if result['mimeType'] == MIMETYPE_GA_FOLDER and result['name'] == TEAM_DRIVE:
-                  result['name'] = _getSharedDriveNameFromId(driveId)
+                  result['name'] = _getSharedDriveNameFromId(drive, driveId)
                   result['isRoot'] = True
             result['parents'] = ['']
             fileList.append(result)
@@ -56489,7 +56736,7 @@ def printFileParentTree(users):
 # Last file modification utilities
 def _initLastModification():
   return {'lastModifiedFileId': '', 'lastModifiedFileName': '',
-          'lastModifiedFileMimeType': '', 'lastModifiedFilaPath': '',
+          'lastModifiedFileMimeType': '', 'lastModifiedFilePath': '',
           'lastModifyingUser': '', 'lastModifiedTime': NEVER_TIME,
           'fileEntryInfo': {}}
 
@@ -56504,9 +56751,10 @@ def _checkUpdateLastModifiction(f_file, userLastModification):
     userLastModification['fileEntryInfo'] = f_file.copy()
 
 def _getLastModificationPath(drive, userLastModification, pathDelimiter):
-  filePathInfo = initFilePathInfo(pathDelimiter)
-  _, paths, _ = getFilePaths(drive, {}, userLastModification['fileEntryInfo'], filePathInfo)
-  userLastModification['lastModifiedFilePath'] = paths[0] if paths else UNKNOWN
+  if userLastModification['fileEntryInfo']:
+    filePathInfo = initFilePathInfo(pathDelimiter)
+    _, paths, _ = getFilePaths(drive, {}, userLastModification['fileEntryInfo'], filePathInfo)
+    userLastModification['lastModifiedFilePath'] = paths[0] if paths else UNKNOWN
 
 def _showLastModification(lastModification):
   printKeyValueList(['lastModifiedFileId', lastModification['lastModifiedFileId']])
@@ -56700,7 +56948,7 @@ def printShowFileCounts(users):
     if not drive:
       continue
     sharedDriveId = fileIdEntity.get('shareddrive', {}).get('driveId', '')
-    sharedDriveName = _getSharedDriveNameFromId(sharedDriveId) if sharedDriveId else ''
+    sharedDriveName = _getSharedDriveNameFromId(drive, sharedDriveId) if sharedDriveId else ''
     mimeTypeInfo = {}
     userLastModification = _initLastModification()
     gettingEntity = _getGettingEntity(user, fileIdEntity)
@@ -56845,7 +57093,7 @@ def printShowDrivelastModifications(users):
     if not drive:
       continue
     sharedDriveId = fileIdEntity.get('shareddrive', {}).get('driveId', '')
-    sharedDriveName = _getSharedDriveNameFromId(sharedDriveId) if sharedDriveId else ''
+    sharedDriveName = _getSharedDriveNameFromId(drive, sharedDriveId) if sharedDriveId else ''
     userLastModification = _initLastModification()
     gettingEntity = _getGettingEntity(user, fileIdEntity)
     printGettingAllEntityItemsForWhom(Ent.DRIVE_FILE_OR_FOLDER, gettingEntity, i, count)
@@ -57028,7 +57276,7 @@ def printDiskUsage(users):
           includeOwner = False
           csvPF.RemoveTitles(['Owner', 'ownedByMe'])
           if topFolder['name'] == TEAM_DRIVE and not topFolder.get('parents'):
-            topFolder['name'] = _getSharedDriveNameFromId(driveId)
+            topFolder['name'] = _getSharedDriveNameFromId(drive, driveId)
             topFolder['path'] = f'{SHARED_DRIVES}{pathDelimiter}{topFolder["name"]}'
           else:
             topFolder['path'] = topFolder['name']
@@ -57468,7 +57716,7 @@ def printShowFileTree(users):
                                    fileId=fileId, fields=fields, supportsAllDrives=True)
           if (fileEntryInfo['mimeType'] == MIMETYPE_GA_FOLDER and fileEntryInfo.get('driveId') and
               fileEntryInfo['name'] == TEAM_DRIVE and not fileEntryInfo.get('parents', [])):
-            fileEntryInfo['name'] = f"{SHARED_DRIVES}/{_getSharedDriveNameFromId(fileId)}"
+            fileEntryInfo['name'] = f"{SHARED_DRIVES}/{_getSharedDriveNameFromId(drive, fileId)}"
           if stripCRsFromName:
             fileEntryInfo['name'] = _stripControlCharsFromName(fileEntryInfo['name'])
           if buildTree:
@@ -59109,7 +59357,7 @@ def _getCopyMoveParentInfo(drive, user, i, count, j, jcount, newParentId, statis
         result['destParentType'] = DEST_PARENT_MYDRIVE_FOLDER
     else:
       if result['name'] == TEAM_DRIVE and not result.get('parents', []):
-        result['name'] = _getSharedDriveNameFromId(result['driveId'])
+        result['name'] = _getSharedDriveNameFromId(drive, result['driveId'])
         result['destParentType'] = DEST_PARENT_SHAREDDRIVE_ROOT
       else:
         result['destParentType'] = DEST_PARENT_SHAREDDRIVE_FOLDER
@@ -59379,7 +59627,8 @@ def copyDriveFile(users):
                         throwReasons=GAPI.DRIVE_USER_THROW_REASONS+[GAPI.FORBIDDEN, GAPI.INSUFFICIENT_PERMISSIONS, GAPI.INSUFFICIENT_PARENT_PERMISSIONS,
                                                                     GAPI.INVALID, GAPI.BAD_REQUEST, GAPI.FILE_NOT_FOUND, GAPI.UNKNOWN_ERROR,
                                                                     GAPI.STORAGE_QUOTA_EXCEEDED, GAPI.TEAMDRIVES_SHARING_RESTRICTION_NOT_ALLOWED,
-                                                                    GAPI.TEAMDRIVE_FILE_LIMIT_EXCEEDED, GAPI.TEAMDRIVE_HIERARCHY_TOO_DEEP, GAPI.SHORTCUT_TARGET_INVALID],
+                                                                    GAPI.TEAMDRIVE_FILE_LIMIT_EXCEEDED, GAPI.TEAMDRIVE_HIERARCHY_TOO_DEEP,
+                                                                    GAPI.SHORTCUT_TARGET_INVALID, GAPI.SHARE_OUT_WARNING],
                         body=body, fields='id', supportsAllDrives=True)
       Act.Set(Act.CREATE_SHORTCUT)
       entityModifierItemValueListActionPerformed(kvList, Act.MODIFIER_IN,
@@ -59390,7 +59639,8 @@ def copyDriveFile(users):
     except (GAPI.forbidden, GAPI.insufficientFilePermissions, GAPI.insufficientParentPermissions,
             GAPI.invalid, GAPI.badRequest, GAPI.fileNotFound, GAPI.unknownError,
             GAPI.storageQuotaExceeded, GAPI.teamDrivesSharingRestrictionNotAllowed,
-            GAPI.teamDriveFileLimitExceeded, GAPI.teamDriveHierarchyTooDeep, GAPI.shortcutTargetInvalid) as e:
+            GAPI.teamDriveFileLimitExceeded, GAPI.teamDriveHierarchyTooDeep,
+            GAPI.shortcutTargetInvalid, GAPI.shareOutWarning) as e:
       entityActionFailedWarning(kvList+[Ent.DRIVE_FILE_SHORTCUT, childName], str(e), k, kcount)
       _incrStatistic(statistics, STAT_FILE_FAILED)
 
@@ -59523,7 +59773,7 @@ def copyDriveFile(users):
             result = callGAPI(drive.files(), 'copy',
                               bailOnInternalError=True,
                               throwReasons=GAPI.DRIVE_COPY_THROW_REASONS+[GAPI.INTERNAL_ERROR, GAPI.INSUFFICIENT_PARENT_PERMISSIONS,
-                                                                          GAPI.TEAMDRIVES_SHORTCUT_FILE_NOT_SUPPORTED],
+                                                                          GAPI.TEAMDRIVES_SHORTCUT_FILE_NOT_SUPPORTED, GAPI.SHARE_OUT_WARNING],
                               fileId=childId, body=child, fields='id,name', supportsAllDrives=True)
             if not csvPF:
               entityModifierItemValueListActionPerformed(kvList, Act.MODIFIER_TO,
@@ -59560,7 +59810,7 @@ def copyDriveFile(users):
                   GAPI.insufficientParentPermissions, GAPI.unknownError,
                   GAPI.invalid, GAPI.cannotCopyFile, GAPI.badRequest, GAPI.responsePreparationFailure, GAPI.fileNeverWritable, GAPI.fieldNotWritable,
                   GAPI.teamDrivesSharingRestrictionNotAllowed, GAPI.rateLimitExceeded, GAPI.userRateLimitExceeded,
-                  GAPI.internalError, GAPI.teamDrivesShortcutFileNotSupported) as e:
+                  GAPI.internalError, GAPI.teamDrivesShortcutFileNotSupported, GAPI.shareOutWarning) as e:
             entityActionFailedWarning(kvList, str(e), k, kcount)
             _incrStatistic(statistics, STAT_FILE_FAILED)
           except (GAPI.storageQuotaExceeded, GAPI.teamDriveFileLimitExceeded, GAPI.teamDriveHierarchyTooDeep) as e:
@@ -59656,7 +59906,8 @@ def copyDriveFile(users):
 # Source at root of Shared Drive?
         sourceMimeType = source['mimeType']
         if sourceMimeType == MIMETYPE_GA_FOLDER and source.get('driveId') and source['name'] == TEAM_DRIVE and not source.get('parents', []):
-          source['name'] = _getSharedDriveNameFromId(source['driveId'])
+          copyMoveOptions['sourceIsMyDriveSharedDrive'] = True
+          source['name'] = _getSharedDriveNameFromId(drive, source['driveId'])
         sourceName = source['name']
         sourceNameId = f"{sourceName}({source['id']})"
         copyMoveOptions['sourceDriveId'] = source.get('driveId')
@@ -60232,7 +60483,7 @@ def moveDriveFile(users):
                                                                     GAPI.INVALID, GAPI.BAD_REQUEST, GAPI.FILE_NOT_FOUND, GAPI.UNKNOWN_ERROR,
                                                                     GAPI.STORAGE_QUOTA_EXCEEDED, GAPI.TEAMDRIVES_SHARING_RESTRICTION_NOT_ALLOWED,
                                                                     GAPI.TEAMDRIVE_FILE_LIMIT_EXCEEDED, GAPI.TEAMDRIVE_HIERARCHY_TOO_DEEP, GAPI.SHORTCUT_TARGET_INVALID,
-                                                                    GAPI.TARGET_USER_ROLE_LIMITED_BY_LICENSE_RESTRICTION],
+                                                                    GAPI.TARGET_USER_ROLE_LIMITED_BY_LICENSE_RESTRICTION, GAPI.SHARE_OUT_WARNING],
                         body=body, fields='id', supportsAllDrives=True)
       Act.Set(Act.CREATE_SHORTCUT)
       entityModifierItemValueListActionPerformed(kvList, Act.MODIFIER_IN,
@@ -60244,7 +60495,7 @@ def moveDriveFile(users):
             GAPI.invalid, GAPI.badRequest, GAPI.fileNotFound, GAPI.unknownError,
             GAPI.storageQuotaExceeded, GAPI.teamDrivesSharingRestrictionNotAllowed,
             GAPI.teamDriveFileLimitExceeded, GAPI.teamDriveHierarchyTooDeep, GAPI.shortcutTargetInvalid,
-            GAPI.targetUserRoleLimitedByLicenseRestriction) as e:
+            GAPI.targetUserRoleLimitedByLicenseRestriction, GAPI.shareOutWarning) as e:
       entityActionFailedWarning(kvList+[Ent.DRIVE_FILE_SHORTCUT, childName], str(e), k, kcount)
       _incrStatistic(statistics, STAT_FILE_FAILED)
 
@@ -60262,6 +60513,7 @@ def moveDriveFile(users):
                                                              GAPI.FILE_OWNER_NOT_MEMBER_OF_TEAMDRIVE,
                                                              GAPI.FILE_OWNER_NOT_MEMBER_OF_WRITER_DOMAIN,
                                                              GAPI.FILE_WRITER_TEAMDRIVE_MOVE_IN_DISABLED,
+                                                             GAPI.SHARE_OUT_NOT_PERMITTED,
                                                              GAPI.TARGET_USER_ROLE_LIMITED_BY_LICENSE_RESTRICTION,
                                                              GAPI.CANNOT_MOVE_TRASHED_ITEM_INTO_TEAMDRIVE,
                                                              GAPI.CANNOT_MOVE_TRASHED_ITEM_OUT_OF_TEAMDRIVE,
@@ -60276,7 +60528,7 @@ def moveDriveFile(users):
       _incrStatistic(statistics, STAT_FILE_COPIED_MOVED)
       return
     except (GAPI.fileNotFound, GAPI.forbidden, GAPI.internalError, GAPI.unknownError, GAPI.badRequest,
-            GAPI.targetUserRoleLimitedByLicenseRestriction,
+            GAPI.shareOutNotPermitted, GAPI.targetUserRoleLimitedByLicenseRestriction,
             GAPI.cannotMoveTrashedItemIntoTeamDrive, GAPI.cannotMoveTrashedItemOutOfTeamDrive,
             GAPI.teamDrivesShortcutFileNotSupported, GAPI.storageQuotaExceeded) as e:
       entityActionFailedWarning(kvList, str(e), k, kcount)
@@ -60426,7 +60678,7 @@ def moveDriveFile(users):
         if sourceMimeType == MIMETYPE_GA_FOLDER and source['name'] in [MY_DRIVE, TEAM_DRIVE] and not source.get('parents', []):
           copyMoveOptions['sourceIsMyDriveSharedDrive'] = True
           if source.get('driveId'):
-            source['name'] = _getSharedDriveNameFromId(source['driveId'])
+            source['name'] = _getSharedDriveNameFromId(drive, source['driveId'])
         sourceName = source['name']
         sourceNameId = f"{sourceName}({source['id']})"
         copyMoveOptions['sourceDriveId'] = source.get('driveId')
@@ -62870,7 +63122,7 @@ def printEmptyDriveFolders(users):
         fileIdEntity['shareddrive'] = {'driveId': sharedDriveId, 'corpora': 'drive', 'includeItemsFromAllDrives': True, 'supportsAllDrives': True}
         csvPF.AddTitles(['driveId'])
         csvPF.MoveTitlesToEnd(['name'])
-        pathList = [f'{SHARED_DRIVES}/{_getSharedDriveNameFromId(sharedDriveId)}']
+        pathList = [f'{SHARED_DRIVES}/{_getSharedDriveNameFromId(drive, sharedDriveId)}']
       else:
         pathList = [fileEntryInfo['name']]
       mimeType = fileEntryInfo['mimeType']
@@ -62960,7 +63212,7 @@ def deleteEmptyDriveFolders(users):
       if 'driveId' in fileEntryInfo:
         sharedDriveId = fileEntryInfo['driveId']
         fileIdEntity['shareddrive'] = {'driveId': sharedDriveId, 'corpora': 'drive', 'includeItemsFromAllDrives': True, 'supportsAllDrives': True}
-        pathList = [f'{SHARED_DRIVES}/{_getSharedDriveNameFromId(sharedDriveId)}']
+        pathList = [f'{SHARED_DRIVES}/{_getSharedDriveNameFromId(drive, sharedDriveId)}']
       else:
         pathList = [fileEntryInfo['name']]
       mimeType = fileEntryInfo['mimeType']
@@ -65233,12 +65485,14 @@ SHAREDDRIVE_ACL_ROLES_MAP = {
 #	(role|roles <SharedDriveACLRoleList>)*
 #	[fields <SharedDriveFieldNameList>] [noorgunits [<Boolean>]]
 #	[guiroles [<Boolean>]] [formatjson [quotechar <Character>]]
+# 	[showitemcountonly]
 # gam <UserTypeEntity> show shareddrives
 #	[asadmin [shareddriveadminquery|query <QuerySharedDrive>]]
 #	[matchname <REMatchPattrn>] [orgunit|org|ou <OrgUnitPath>]
 #	(role|roles <SharedDriveACLRoleLIst>)*
 #	[fields <SharedDriveFieldNameList>] [noorgunits [<Boolean>]]
 #	[guiroles [<Boolean>]] [formatjson]
+# 	[showitemcountonly]
 def printShowSharedDrives(users, useDomainAdminAccess=False):
   def stripNonShowFields(shareddrive):
     if orgUnitIdToPathMap:
@@ -65262,7 +65516,7 @@ def printShowSharedDrives(users, useDomainAdminAccess=False):
   SHAREDDRIVE_FIELDS_CHOICE_MAP.update(SHAREDDRIVE_LIST_FIELDS_CHOICE_MAP)
   showOrgUnitPaths = True
   orgUnitIdToPathMap = None
-  guiRoles = False
+  guiRoles = showItemCountOnly = False
   while Cmd.ArgumentsRemaining():
     myarg = getArgument()
     if csvPF and myarg == 'todrive':
@@ -65292,6 +65546,9 @@ def printShowSharedDrives(users, useDomainAdminAccess=False):
       showOrgUnitPaths = not getBoolean()
     elif myarg == 'guiroles':
       guiRoles = getBoolean()
+    elif myarg == 'showitemcountonly':
+      showItemCountOnly = True
+      showOrgUnitPaths = False
     else:
       FJQC.GetFormatJSONQuoteChar(myarg, True)
   if query and not useDomainAdminAccess:
@@ -65361,6 +65618,9 @@ def printShowSharedDrives(users, useDomainAdminAccess=False):
     jcount = len(matchedFeed)
     if jcount == 0:
       setSysExitRC(NO_ENTITIES_FOUND_RC)
+    if showItemCountOnly:
+      writeStdout(f'{jcount}\n')
+      return
     if not csvPF:
       if not FJQC.formatJSON:
         entityPerformActionNumItems([Ent.USER, user], jcount, Ent.SHAREDDRIVE, i, count)
@@ -65391,13 +65651,15 @@ def doPrintShowSharedDrives():
 # gam print oushareddrives [todrive <ToDriveAttribute>*]
 #	[ou|org|orgunit <OrgUnitPath>]
 #	[formatjson [quotechar <Character>]]
+# 	[showitemcountonly]
 # gam show oushareddrives
 #	[ou|org|orgunit <OrgUnitPath>]
 #	[formatjson]
+# 	[showitemcountonly]
 def doPrintShowOrgunitSharedDrives():
   def _getOrgUnitSharedDriveInfo(shareddrive):
     shareddrive['driveId'] = shareddrive['name'].rsplit(';')[1]
-    shareddrive['driveName'] = _getSharedDriveNameFromId(shareddrive['driveId'])
+    shareddrive['driveName'] = _getSharedDriveNameFromId(drive, shareddrive['driveId'], True)
     shareddrive['orgUnitPath'] = orgUnitPath
 
   def _showOrgUnitSharedDrive(shareddrive, j, jcount, FJQC):
@@ -65411,23 +65673,26 @@ def doPrintShowOrgunitSharedDrives():
     printEntity([Ent.MEMBER_URI, shareddrive['memberUri']])
     printEntity([Ent.SHAREDDRIVE_ID, shareddrive['driveId']])
     printEntity([Ent.SHAREDDRIVE_NAME, shareddrive['driveName']])
-    printEntity([Ent.ORGANIZATIONAL_UNIT, shareddrive['orgUnit']])
+    printEntity([Ent.ORGANIZATIONAL_UNIT, shareddrive['orgUnitPath']])
     Ind.Decrement()
 
   ci = buildGAPIObject(API.CLOUDIDENTITY_ORGUNITS_BETA)
   cd = buildGAPIObject(API.DIRECTORY)
-  _, GM.Globals[GM.ADMIN_DRIVE] = buildGAPIServiceObject(API.DRIVE3, _getAdminEmail())
-  if not GM.Globals[GM.ADMIN_DRIVE]:
+  _, drive = buildGAPIServiceObject(API.DRIVE3, _getAdminEmail())
+  if drive is None:
     return
   csvPF = CSVPrintFile(['name', 'type', 'member', 'memberUri', 'driveId', 'driveName', 'orgUnitPath']) if Act.csvFormat() else None
   FJQC = FormatJSONQuoteChar(csvPF)
   orgUnitPath = '/'
+  showItemCountOnly = False
   while Cmd.ArgumentsRemaining():
     myarg = getArgument()
     if csvPF and myarg == 'todrive':
       csvPF.GetTodriveParameters()
     elif myarg in {'ou', 'org', 'orgunit'}:
       orgUnitPath = getString(Cmd.OB_ORGUNIT_ITEM)
+    elif myarg == 'showitemcountonly':
+      showItemCountOnly = True
     else:
       FJQC.GetFormatJSONQuoteChar(myarg, True)
   if csvPF and FJQC.formatJSON:
@@ -65442,6 +65707,9 @@ def doPrintShowOrgunitSharedDrives():
   jcount = len(sds)
   if jcount == 0:
     setSysExitRC(NO_ENTITIES_FOUND_RC)
+  if showItemCountOnly:
+    writeStdout(f'{jcount}\n')
+    return
   if not csvPF:
     if not FJQC.formatJSON:
       entityPerformActionNumItems([Ent.ORGANIZATIONAL_UNIT, orgUnitPath], jcount, Ent.SHAREDDRIVE)
@@ -65496,13 +65764,13 @@ def copySyncSharedDriveACLs(users, useDomainAdminAccess=False):
     if not drive:
       continue
     if not srcFileIdEntity.get('shareddrivename'):
-      srcFileIdEntity['shareddrivename'] = _getSharedDriveNameFromId(srcFileIdEntity['shareddrive']['driveId'])
+      srcFileIdEntity['shareddrivename'] = _getSharedDriveNameFromId(drive, srcFileIdEntity['shareddrive']['driveId'])
     if tgtFileIdEntity.get('shareddrivename'):
       if not _convertSharedDriveNameToId(drive, user, i, count, tgtFileIdEntity, useDomainAdminAccess):
         continue
       tgtFileIdEntity['shareddrive']['corpora'] = 'drive'
     else:
-      tgtFileIdEntity['shareddrivename'] = _getSharedDriveNameFromId(tgtFileIdEntity['shareddrive']['driveId'])
+      tgtFileIdEntity['shareddrivename'] = _getSharedDriveNameFromId(drive, tgtFileIdEntity['shareddrive']['driveId'])
     statistics = _initStatistics()
     copyMoveOptions['sourceDriveId'] = srcFileIdEntity['shareddrive']['driveId']
     copyMoveOptions['destDriveId'] = tgtFileIdEntity['shareddrive']['driveId']
@@ -65802,6 +66070,191 @@ def printShowSharedDriveACLs(users, useDomainAdminAccess=False):
 
 def doPrintShowSharedDriveACLs():
   printShowSharedDriveACLs([_getAdminEmail()], True)
+
+PRINT_ORGANIZER_TYPES = {'group', 'user'}
+
+# gam [<UserTypeEntity>] print shareddriveorganizers [todrive <ToDriveAttribute>*]
+#	[adminaccess|asadmin]
+#	[(shareddriveadminquery|query <QuerySharedDrive>) |
+#	 (shareddrives|teamdrives (<SharedDriveIDList>|(select <FileSelector>|<CSVFileSelector>)))]
+#	[matchname <REMatchPattern>] [orgunit|org|ou <OrgUnitPath>]
+#	[domainlist <DomainList>]
+#	[includetypes user|group]
+#	[oneorganizer [<Boolean>]]
+#	[shownorganizerdrives false|true|only]
+#	[includefileorganizers [<Boolean>]]
+#	[delimiter <Character>]
+def printSharedDriveOrganizers(users, useDomainAdminAccess=False):
+  csvPF = CSVPrintFile(['id', 'name', 'organizers', 'createdTime'], 'sortall')
+  delimiter = GC.Values[GC.CSV_OUTPUT_FIELD_DELIMITER]
+  roles = set(['organizer'])
+  includeTypes = set()
+  showNoOrganizerDrives = SHOW_NO_PERMISSIONS_DRIVES_CHOICE_MAP['false']
+  fieldsList = ['role', 'type', 'emailAddress']
+  cd = entityList = orgUnitId = query = matchPattern = None
+  domainList = [GC.Values[GC.DOMAIN]]
+  oneOrganizer = True
+  while Cmd.ArgumentsRemaining():
+    myarg = getArgument()
+    if csvPF and myarg == 'todrive':
+      csvPF.GetTodriveParameters()
+    elif myarg == 'delimiter':
+      delimiter = getCharacter()
+    elif myarg in {'shareddrive', 'shareddrives', 'teamdrive', 'teamdrives'}:
+      sharedDriveArg = myarg
+      itemList = getString(Cmd.OB_SHAREDDRIVE_ID_LIST)
+      if itemList != 'select':
+        entityList =  itemList.replace(',', ' ').split()
+      else:
+        entityList = getEntityList(Cmd.OB_SHAREDDRIVE_ID_LIST)
+    elif myarg in {'teamdriveadminquery', 'shareddriveadminquery', 'query'}:
+      queryArg = myarg
+      queryLocation = Cmd.Location()
+      query = getString(Cmd.OB_QUERY, minLen=0) or None
+      if query:
+        query = mapQueryRelativeTimes(query, ['createdTime'])
+    elif myarg == 'matchname':
+      matchPattern = getREPattern(re.IGNORECASE)
+    elif myarg in {'ou', 'org', 'orgunit'}:
+      orgLocation = Cmd.Location()
+      if cd is None:
+        cd = buildGAPIObject(API.DIRECTORY)
+      orgUnitPath, orgUnitId = getOrgUnitId(cd)
+      orgUnitId = orgUnitId[3:]
+      orgUnitInfo = {'orgUnit': orgUnitPath, 'orgUnitId': orgUnitId}
+    elif myarg in ADMIN_ACCESS_OPTIONS:
+      useDomainAdminAccess = True
+    elif myarg == 'domainlist':
+      domainList = set(getString(Cmd.OB_DOMAIN_NAME_LIST, minLen=0).replace(',', ' ').lower().split())
+    elif myarg == 'includetypes':
+      for itype in getString(Cmd.OB_ORGANIZER_TYPE_LIST).lower().replace(',', ' ').split():
+        if itype in PRINT_ORGANIZER_TYPES:
+          includeTypes.add(itype)
+        else:
+          invalidChoiceExit(itype, PRINT_ORGANIZER_TYPES, True)
+    elif myarg == 'oneorganizer':
+      oneOrganizer = getBoolean()
+    elif myarg == 'shownoorganizerdrives':
+      showNoOrganizerDrives = getChoice(SHOW_NO_PERMISSIONS_DRIVES_CHOICE_MAP, defaultChoice=1, mapChoice=True)
+    elif myarg in {'includefileorganizers', 'includecontentmanagers'}:
+      if getBoolean():
+        roles.add('fileOrganizer')
+    else:
+      unknownArgumentExit()
+  if query:
+    if not useDomainAdminAccess:
+      Cmd.SetLocation(queryLocation-1)
+      usageErrorExit(Msg.ONLY_ADMINISTRATORS_CAN_PERFORM_SHARED_DRIVE_QUERIES)
+    if entityList:
+      Cmd.SetLocation(queryLocation-1)
+      usageErrorExit(Msg.ARE_MUTUALLY_EXCLUSIVE.format(queryArg, sharedDriveArg))
+  if orgUnitId is not None:
+    if not useDomainAdminAccess:
+      Cmd.SetLocation(orgLocation-1)
+      usageErrorExit(Msg.ONLY_ADMINISTRATORS_CAN_SPECIFY_SHARED_DRIVE_ORGUNIT)
+    csvPF.AddTitles(['orgUnit', 'orgUnitId'])
+  if not includeTypes:
+    includeTypes = set(['user'])
+  fields = getItemFieldsFromFieldsList('permissions', fieldsList, True)
+  i, count, users = getEntityArgument(users)
+  for user in users:
+    i += 1
+    user, drive = buildGAPIServiceObject(API.DRIVE3, user, i, count)
+    if not drive:
+      continue
+    if entityList is None:
+      if useDomainAdminAccess:
+        printGettingAllAccountEntities(Ent.SHAREDDRIVE, query)
+        pageMessage = getPageMessage()
+      else:
+        printGettingAllEntityItemsForWhom(Ent.SHAREDDRIVE, user, i, count, query)
+        pageMessage = getPageMessageForWhom()
+      try:
+        feed = callGAPIpages(drive.drives(), 'list', 'drives',
+                             pageMessage=pageMessage,
+                             throwReasons=GAPI.DRIVE_USER_THROW_REASONS+[GAPI.INVALID_QUERY, GAPI.INVALID,
+                                                                         GAPI.QUERY_REQUIRES_ADMIN_CREDENTIALS,
+                                                                         GAPI.NO_LIST_TEAMDRIVES_ADMINISTRATOR_PRIVILEGE,
+                                                                         GAPI.FILE_NOT_FOUND],
+                             q=query, useDomainAdminAccess=useDomainAdminAccess,
+                             fields='nextPageToken,drives(id,name,createdTime,orgUnitId)', pageSize=100)
+      except (GAPI.invalidQuery, GAPI.invalid, GAPI.queryRequiresAdminCredentials,
+              GAPI.noListTeamDrivesAdministratorPrivilege, GAPI.fileNotFound) as e:
+        entityActionFailedWarning([Ent.USER, user, Ent.SHAREDDRIVE, None], str(e), i, count)
+        continue
+      except (GAPI.serviceNotAvailable, GAPI.authError, GAPI.domainPolicy) as e:
+        userDriveServiceNotEnabledWarning(user, str(e), i, count)
+        continue
+    else:
+      feed = []
+      jcount = len(entityList)
+      j = 0
+      for driveId in entityList:
+        j +=1
+        try:
+          feed.append(callGAPI(drive.drives(), 'get',
+                               throwReasons=GAPI.DRIVE_USER_THROW_REASONS+[GAPI.NOT_FOUND],
+                               useDomainAdminAccess=useDomainAdminAccess,
+                               driveId=driveId, fields='id,name,createdTime,orgUnitId'))
+        except (GAPI.fileNotFound, GAPI.notFound) as e:
+          entityActionNotPerformedWarning([Ent.USER, user, Ent.SHAREDDRIVE_ID, driveId], str(e), j, jcount)
+          continue
+        except (GAPI.serviceNotAvailable, GAPI.authError, GAPI.domainPolicy) as e:
+          userDriveServiceNotEnabledWarning(user, str(e), i, count)
+          break
+    matchFeed = []
+    jcount = len(feed)
+    j = 0
+    for shareddrive in feed:
+      j += 1
+      if ((matchPattern is not None and matchPattern.match(shareddrive['name']) is None) or
+          (orgUnitId is not None and orgUnitId != shareddrive.get('orgUnitId'))):
+        continue
+      printGettingAllEntityItemsForWhom(Ent.PERMISSION, shareddrive['name'], j, jcount)
+      shareddrive['createdTime'] = formatLocalTime(shareddrive['createdTime'])
+      shareddrive['organizers'] = []
+      try:
+        permissions = callGAPIpages(drive.permissions(), 'list', 'permissions',
+                                    pageMessage=getPageMessageForWhom(),
+                                    throwReasons=GAPI.DRIVE3_GET_ACL_REASONS,
+                                    retryReasons=GAPI.SERVICE_NOT_AVAILABLE_RETRY_REASONS,
+                                    useDomainAdminAccess=useDomainAdminAccess,
+                                    fileId=shareddrive['id'], fields=fields, supportsAllDrives=True)
+        for permission in permissions:
+          if permission['type'] in includeTypes and permission['role'] in roles:
+            if domainList:
+              _, domain = permission['emailAddress'].lower().split('@', 1)
+              if domain not in domainList:
+                continue
+            shareddrive['organizers'].append(permission['emailAddress'])
+            if oneOrganizer:
+              break
+        if not shareddrive['organizers']:
+          if showNoOrganizerDrives == 0: # no organizers and showNoOrganizerDrives False - ignore
+            continue
+          matchFeed.append(shareddrive) # no organizers and showNoOrganizerDrives Only/True - keep
+          continue
+        if showNoOrganizerDrives < 0: # organizers and showNoOrganizerDrives Only/True - ignore
+          continue
+        matchFeed.append(shareddrive)
+      except (GAPI.fileNotFound, GAPI.forbidden, GAPI.internalError,
+              GAPI.insufficientAdministratorPrivileges, GAPI.insufficientFilePermissions,
+              GAPI.unknownError, GAPI.invalid):
+        pass
+    if len(matchFeed) == 0:
+      setSysExitRC(NO_ENTITIES_FOUND_RC)
+    for shareddrive in matchFeed:
+      row = {'id': shareddrive['id'], 'name': shareddrive['name'],
+             'organizers': delimiter.join(shareddrive['organizers']),
+             'createdTime': shareddrive['createdTime']}
+      if orgUnitId:
+        row.update(orgUnitInfo)
+      csvPF.WriteRowTitles(row)
+  if csvPF:
+    csvPF.writeCSVfile('SharedDrive Organizers')
+
+def doPrintSharedDriveOrganizers():
+  printSharedDriveOrganizers([_getAdminEmail()], True)
 
 LOOKERSTUDIO_ASSETTYPE_CHOICE_MAP = {
   'report': ['REPORT'],
@@ -75538,7 +75991,7 @@ MAIN_COMMANDS_WITH_OBJECTS = {
     ),
   'info':
     (Act.INFO,
-     {Cmd.ARG_ADMINROLE:	doInfoAdminRole,
+     {Cmd.ARG_ADMINROLE:	doInfoPrintShowAdminRoles,
       Cmd.ARG_ALERT:		doInfoAlert,
       Cmd.ARG_ALIAS:		doInfoAliases,
       Cmd.ARG_BUILDING:		doInfoBuilding,
@@ -75570,7 +76023,6 @@ MAIN_COMMANDS_WITH_OBJECTS = {
       Cmd.ARG_DRIVEFILEACL:	doInfoDriveFileACLs,
       Cmd.ARG_DRIVELABEL:	doInfoDriveLabels,
       Cmd.ARG_INSTANCE:		doInfoInstance,
-      Cmd.ARG_GAL:		doInfoGAL,
       Cmd.ARG_GROUP:		doInfoGroups,
       Cmd.ARG_GROUPMEMBERS:	doInfoGroupMembers,
       Cmd.ARG_INBOUNDSSOASSIGNMENT:	doInfoInboundSSOAssignment,
@@ -75613,7 +76065,7 @@ MAIN_COMMANDS_WITH_OBJECTS = {
   'print':
     (Act.PRINT,
      {Cmd.ARG_ADDRESSES:	doPrintAddresses,
-      Cmd.ARG_ADMINROLE:	doPrintShowAdminRoles,
+      Cmd.ARG_ADMINROLE:	doInfoPrintShowAdminRoles,
       Cmd.ARG_ADMIN:		doPrintShowAdmins,
       Cmd.ARG_ALERT:		doPrintShowAlerts,
       Cmd.ARG_ALERTFEEDBACK:	doPrintShowAlertFeedback,
@@ -75665,7 +76117,6 @@ MAIN_COMMANDS_WITH_OBJECTS = {
       Cmd.ARG_DRIVELABEL:	doPrintShowDriveLabels,
       Cmd.ARG_DRIVELABELPERMISSION:	doPrintShowDriveLabelPermissions,
       Cmd.ARG_FEATURE:		doPrintShowFeatures,
-      Cmd.ARG_GAL:		doPrintShowGAL,
       Cmd.ARG_GROUP:		doPrintGroups,
       Cmd.ARG_GROUPMEMBERS:	doPrintGroupMembers,
       Cmd.ARG_GROUPTREE:	doPrintShowGroupTree,
@@ -75691,6 +76142,7 @@ MAIN_COMMANDS_WITH_OBJECTS = {
       Cmd.ARG_SCHEMA:		doPrintShowUserSchemas,
       Cmd.ARG_SHAREDDRIVE:	doPrintShowSharedDrives,
       Cmd.ARG_SHAREDDRIVEACLS:	doPrintShowSharedDriveACLs,
+      Cmd.ARG_SHAREDDRIVEORGANIZERS:	doPrintSharedDriveOrganizers,
       Cmd.ARG_SITE:		deprecatedDomainSites,
       Cmd.ARG_SITEACL:		deprecatedDomainSites,
       Cmd.ARG_SITEACTIVITY:	deprecatedDomainSites,
@@ -75746,7 +76198,7 @@ MAIN_COMMANDS_WITH_OBJECTS = {
     ),
   'show':
     (Act.SHOW,
-     {Cmd.ARG_ADMINROLE:	doPrintShowAdminRoles,
+     {Cmd.ARG_ADMINROLE:	doInfoPrintShowAdminRoles,
       Cmd.ARG_ADMIN:		doPrintShowAdmins,
       Cmd.ARG_ALERT:		doPrintShowAlerts,
       Cmd.ARG_ALERTFEEDBACK:	doPrintShowAlertFeedback,
@@ -75783,7 +76235,6 @@ MAIN_COMMANDS_WITH_OBJECTS = {
       Cmd.ARG_DRIVELABEL:	doPrintShowDriveLabels,
       Cmd.ARG_DRIVELABELPERMISSION:	doPrintShowDriveLabelPermissions,
       Cmd.ARG_FEATURE:		doPrintShowFeatures,
-      Cmd.ARG_GAL:		doPrintShowGAL,
       Cmd.ARG_GROUPMEMBERS:	doShowGroupMembers,
       Cmd.ARG_GROUPTREE:	doPrintShowGroupTree,
       Cmd.ARG_GUARDIAN:		doPrintShowGuardians,
@@ -76040,6 +76491,7 @@ MAIN_COMMANDS_OBJ_ALIASES = {
   Cmd.ARG_TEAMDRIVES:		Cmd.ARG_SHAREDDRIVE,
   Cmd.ARG_TEAMDRIVEACLS:	Cmd.ARG_SHAREDDRIVEACLS,
   Cmd.ARG_TEAMDRIVEINFO:	Cmd.ARG_SHAREDDRIVEINFO,
+  Cmd.ARG_TEAMDRIVEORGANIZERS:	Cmd.ARG_SHAREDDRIVEORGANIZERS,
   Cmd.ARG_TEAMDRIVETHEMES:	Cmd.ARG_SHAREDDRIVETHEMES,
   Cmd.ARG_TOKENS:		Cmd.ARG_TOKEN,
   Cmd.ARG_TRANSFER:		Cmd.ARG_DATATRANSFER,
@@ -76668,7 +77120,6 @@ USER_COMMANDS_WITH_OBJECTS = {
       Cmd.ARG_ANALYTICACCOUNTSUMMARY:	printShowAnalyticAccountSummaries,
       Cmd.ARG_ANALYTICDATASTREAM:	printShowAnalyticDatastreams,
       Cmd.ARG_ANALYTICPROPERTY:	printShowAnalyticProperties,
-      Cmd.ARG_ANALYTICUAPROPERTY:	printShowAnalyticUAProperties,
       Cmd.ARG_ASP:		printShowASPs,
       Cmd.ARG_BACKUPCODE:	printShowBackupCodes,
       Cmd.ARG_CALENDAR:		printShowCalendars,
@@ -76733,6 +77184,7 @@ USER_COMMANDS_WITH_OBJECTS = {
       Cmd.ARG_SENDAS:		printShowSendAs,
       Cmd.ARG_SHAREDDRIVE:	printShowSharedDrives,
       Cmd.ARG_SHAREDDRIVEACLS:	printShowSharedDriveACLs,
+      Cmd.ARG_SHAREDDRIVEORGANIZERS:	printSharedDriveOrganizers,
       Cmd.ARG_SHEET:		infoPrintShowSheets,
       Cmd.ARG_SHEETRANGE:	printShowSheetRanges,
       Cmd.ARG_SIGNATURE:	printShowSignature,
@@ -76775,7 +77227,6 @@ USER_COMMANDS_WITH_OBJECTS = {
       Cmd.ARG_ANALYTICACCOUNTSUMMARY:	printShowAnalyticAccountSummaries,
       Cmd.ARG_ANALYTICDATASTREAM:	printShowAnalyticDatastreams,
       Cmd.ARG_ANALYTICPROPERTY:	printShowAnalyticProperties,
-      Cmd.ARG_ANALYTICUAPROPERTY:	printShowAnalyticUAProperties,
       Cmd.ARG_ASP:		printShowASPs,
       Cmd.ARG_BACKUPCODE:	printShowBackupCodes,
       Cmd.ARG_CALENDAR:		printShowCalendars,
@@ -76988,7 +77439,6 @@ USER_COMMANDS_OBJ_ALIASES = {
   Cmd.ARG_ANALYTICACCOUNTSUMMARIES:	Cmd.ARG_ANALYTICACCOUNTSUMMARY,
   Cmd.ARG_ANALYTICDATASTREAMS:	Cmd.ARG_ANALYTICDATASTREAM,
   Cmd.ARG_ANALYTICPROPERTIES:	Cmd.ARG_ANALYTICPROPERTY,
-  Cmd.ARG_ANALYTICUAPROPERTIES:	Cmd.ARG_ANALYTICUAPROPERTY,
   Cmd.ARG_ASPS:			Cmd.ARG_ASP,
   Cmd.ARG_BACKUPCODES:		Cmd.ARG_BACKUPCODE,
   Cmd.ARG_CALENDARS:		Cmd.ARG_CALENDAR,
@@ -77092,6 +77542,7 @@ USER_COMMANDS_OBJ_ALIASES = {
   Cmd.ARG_TEAMDRIVES:		Cmd.ARG_SHAREDDRIVE,
   Cmd.ARG_TEAMDRIVEACLS:	Cmd.ARG_SHAREDDRIVEACLS,
   Cmd.ARG_TEAMDRIVEINFO:	Cmd.ARG_SHAREDDRIVEINFO,
+  Cmd.ARG_TEAMDRIVEORGANIZERS:	Cmd.ARG_SHAREDDRIVEORGANIZERS,
   Cmd.ARG_TEAMDRIVETHEMES:	Cmd.ARG_SHAREDDRIVETHEMES,
   Cmd.ARG_THREADS:		Cmd.ARG_THREAD,
   Cmd.ARG_TOKENS:		Cmd.ARG_TOKEN,

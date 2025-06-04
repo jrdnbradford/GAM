@@ -8,6 +8,7 @@
   - [Copy content of My Drive to a Shared Drive](#copy-content-of-my-drive-to-a-shared-drive)
   - [Copy content of a Shared Drive to another Shared Drive](#copy-content-of-a-shared-drive-to-another-shared-drive)
 - [Move files and folders](#move-files-and-folders)
+  - [Move My Drive folder to Shared Drive](#move-my-drive-folder-to-shared-drive)
   - [Simple moves by changing parents](#simple-moves-by-changing-parents)
   - [Move with ownership change](#move-with-ownership-change)
   - [Complex moves](#complex-moves)
@@ -17,6 +18,7 @@
 * [Drive API - Files](https://developers.google.com/drive/api/v3/reference/files)
 * [Move content to Shared Drives](https://support.google.com/a/answer/7374057)
 * [Shared Drive Limits](https://support.google.com/a/users/answer/7338880)
+* [Limited and Expansive Access](https://developers.google.com/workspace/drive/api/guides/limited-expansive-access)
 
 ## Definitions
 * [`<DriveFileEntity>`](Drive-File-Selection)
@@ -114,6 +116,7 @@ gam <UserTypeEntity> copy drivefile <DriveFileEntity>
         (mappermissionsdomain <DomainName> <DomainName>)*
         [sendemailifrequired [<Boolean>]]
         [verifyorganizer [<Boolean>]]
+        [enforceexpansiveaccess [<Boolean>]]
 ```
 The files/folders specified by `<DriveFileEntity>` are referred to as `source`, `target` refers to where those files are being copied.
 The files/folders specified by `<DriveFileEntity>` are referred to as `top`; when a folder is being copied recursively, the files/folders that it contains are referred as `sub`.
@@ -428,6 +431,18 @@ gam user user@domain.com copy drivefile teamdriveid 0AC_1AB teamdriveparentid 0A
 ```
 
 ## Move files and folders
+## Move My Drive folder to Shared Drive
+There are two methods for moving a folder from a My Drive to a Shared Drive:
+* Drive UI - You can simple drag and drop the folder from the My Drive to the Shared Drive
+  * Google inspects the content of the folder and may not perform the move if:
+    * Files and folders within the selected folder are owned by users outside of your domain
+    * Files and folders within the selected folder are owned by other users inside of your domain but the owner of the original folder has only read access
+  * All folder and files IDs are preserved
+* GAM
+  * The Drive API doesn't allow moving a folder from a My Drive to a Shared Drive; GAM has to recreate the folders on the Shared Drive, thus changing their IDs
+  * Files are  simply moved from their existing My Drive folder to the recreated Shared Drive folder; their IDs do not change
+  * Files owmed by users outside of your domain can't be moved
+
 ## Simple moves by changing parents
 Use this command in the following cases:
 * Move a file or folder from one location to another on My Drive
@@ -486,6 +501,7 @@ gam <UserTypeEntity> move drivefile <DriveFileEntity> [newfilename <DriveFileNam
         [retainsourcefolders [<Boolean>]]
         [sendemailifrequired [<Boolean>]]
         [verifyorganizer [<Boolean>]]
+        [enforceexpansiveaccess [<Boolean>]]
 ```
 The files/folders specified by `<DriveFileEntity>` are referred to as `source`, `target` refers to where those files are being moved.
 The files/folders specified by `<DriveFileEntity>` are referred to as `top`; when a folder is being moved, the files/folders that it contains are referred as `sub`.
@@ -646,7 +662,7 @@ When moving a folder you can use the `retainsourcefolders` option to cause GAM t
 Moving a Drive folder to a Shared Drive is not directly supported by the API; GAM has to make a copy of the folder on the Shared Drive and
 recursively adjust the files/folders within it to point to the new parent folder. Once the original folder is emptied, it is deleted unless `retainsourcefolders` is specified.
 
-### Move content of a Shared Drive to another Shared Drive
+## Move content of a Shared Drive to another Shared Drive
 Suppose you have a source Shared Drive with ID 0AC_1AB with multiple files and folders, and want to move all of its content to the target Shared Drive with ID 0AE_9ZX.
 
 The following command will change the parents of the top level files and folders from 0AC_1AB to 0AE_9ZX; the sub files and folders will move along with their top level folder.
@@ -660,3 +676,19 @@ If you want the source Shared Drive with ID 0AC_1AB to be contained in a top lev
 ```
 gam user user@domain.com move drivefile teamdriveid 0AC_1AB teamdriveparentid 0AE_9ZX
 ```
+
+### Inter-workspace moves
+Due to a restructuring, you want to move data from Shared Drive A in domaina.com to Shared Drive B in domainb.com.
+* Shared Drive A in domaina.com has the following unchecked: `Allow people outside of Domain A to access files`
+* Shared Drive B in domainb.com has the following checked: `Allow people outside of Domain B to access files`
+* `user@domaina.com` is a manager of both Shared Drives.
+
+```
+$ gam user user@domaina move drivefile teamdriveid <SharedDriveAID> teamdriveparentid <SharedDriveBID> mergewithparent
+User: user@domaina.com, Move 1 Drive File/Folder
+  User: user@domaina.com, Drive Folder: Shared Drive A(<SharedDriveAID>), Move(Merge) contents with Drive Folder: Shared Drive B(<SharedDriveBID>)
+    User: user@domaina.com, Drive File: Filename(<FileID>), Move Failed: Bad Request. User message: "shareOutNotPermitted"
+...
+  User: user@domaina.com, Drive Folder: Shared Drive A(<SharedDriveAID>), Retained
+```
+To get this to work, you must check `Allow people outside of Domain A to access files` on Shared Drive A in domaina.com

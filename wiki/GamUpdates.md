@@ -10,6 +10,279 @@ Add the `-s` option to the end of the above commands to suppress creating the `g
 
 See [Downloads-Installs-GAM7](https://github.com/GAM-team/GAM/wiki/Downloads-Installs) for Windows or other options, including manual installation
 
+### 7.08.03
+
+Fixed bug in `gam <UserTypeEntity> check|update serviceaccount` where the first use of
+the command after project creation enabled the following scopes that should be off by default.
+```
+Identity and Access Management API
+Youtube API - read only
+```
+
+### 7.08.02
+
+Updated the defaults in `gam print shareddriveorganizers` to match the most common use case, not the script.
+
+* `domainlist` - The workspace primary domain
+* `includetypes` - user
+* `oneorganizer` - True
+* `shownoorganizerdrives` - True
+* `includefileorganizers` - False
+
+To select organizers from any domain, use: `domainlist ""`
+
+These commands produce the same result.
+```
+gam redirect csv ./TeamDriveOrganizers.csv print shareddriveorganizers domainlist mydomain.com includetypes user oneorganizer shownoorganizerdrives
+gam redirect csv ./TeamDriveOrganizers.csv print shareddriveorganizers
+```
+
+### 7.08.01
+
+Added option `shareddrives (<SharedDriveIDList>|(select <FileSelector>|<CSVFileSelector>))` to
+`gam print shareddriveorganizers` that displays organizers for a specific list of Shared Drive IDs.
+
+See: https://github.com/GAM-team/GAM/wiki/Shared-Drives#display-shared-drive-organizers
+
+### 7.08.00
+
+Added the following command that can be used instead of the `GetTeamDriveOrganizers.py` script.
+
+gam [<UserTypeEntity>] print shareddriveorganizers [todrive <ToDriveAttribute>*]
+        [adminaccessasadmin] [shareddriveadminquery|query <QuerySharedDrive>]
+        [orgunit|org|ou <OrgUnitPath>]
+        [matchname <REMatchPattern>]
+        [domainlist <DomainList>]
+        [includetypes <OrganizerTypeList>]
+        [oneorganizer [<Boolean>]]
+        [shownorganizerdrives [false|true|only]]
+        [includefileorganizers [<Boolean>]]
+        [delimiter <Character>]
+```
+See: https://github.com/GAM-team/GAM/wiki/Shared-Drives#display-shared-drive-organizers
+
+The command defaults match the script defaults:
+* `domainlist` - All domains
+* `includetypes` - user,group
+* `oneorganizer` - False
+* `shownoorganizerdrives` - True
+* `includefileorganizers` - False
+
+For example, to get a single user organizer from your domain for all Shared Drives including no organizer drives:
+```
+gam redirect csv ./TeamDriveOrganizers.csv print shareddriveorganizers domainlist mydomain.com includetypes user oneorganizer shownoorganizerdrives
+```
+
+### 7.07.17
+
+Added option `oneuserperrow` to `gam print devices` to have each of a
+device's users displayed on a separate row with all of the other device fields.
+
+### 7.07.16
+
+Added `chromeostype`, `diskspaceusage` and `faninfo` to `<CrOSFieldName>` for use in `gam info|print cros`.
+
+Fixed bugs/cleaned output in  `gam info|print cros`.
+
+### 7.07.15
+
+Added option `shareddrivesoption included|included_if_account_is_not_a_member|not_included` to `gam create vaultexport`.
+
+The previous option `includeshareddrives <Boolean>` is mapped as follows:
+* `includeshareddrives false` - `shareddrivesoption included_if_account_is_not_a_member`
+* `includeshareddrives true` - `shareddrivesoption included`
+
+### 7.07.14
+
+Update `gam setup chat` output to include the following that shows the actual Cloud Pub/Sub Topic Name.
+```
+You'll use projects/<ProjectID>/topics/no-topic in Connection settings Cloud Pub/Sub Topic Name
+```
+
+### 7.07.13
+
+Added option `showitemcountonly` to `gam [<UserTypeEntity>] print|show shareddrives` that causes GAM to display the
+number of Shared Drives on stdout; no CSV file is written.
+
+### 7.07.12
+
+Fixed bug in `gam print|show oushareddrives` that caused a trap.
+
+Improved getting Shared Drive names from IDs when accessing Shared Drives in external workspaces.
+
+### 7.07.11
+
+Updated `gam calendars <CalendarEntity> update events` and `gam <UserTypeEntity> update events <UserCalendarEntity>`
+to handle the following error:
+```
+ERROR: 400: badRequest - Bad Request
+```
+
+Updated `gam <UserTypeEntity> move drivefile` to handle the following error:
+```
+ERROR: 400: shareOutNotPermitted
+```
+
+### 7.07.10
+
+Updated `gam calendars <CalendarEntity> update events` and `gam <UserTypeEntity> update events <UserCalendarEntity>`
+to handle the following error:
+```
+ERROR: 400: eventTypeRestriction - Attendees cannot be added to 'fromGmail' event with this visibility setting.
+```
+
+### 7.07.09
+
+Updated `gam calendars <CalendarEntity> update events` and `gam <UserTypeEntity> update events <UserCalendarEntity>`
+to handle the following error:
+```
+gamlib.glgapi.serviceNotAvailable: Authentication backend unavailable.
+```
+
+### 7.07.08
+
+Fixed bug in `gam <UserTypeEntity> print filelist ... countsonly` that issued an
+incorrect warning message like the following when `redirect csv <FileName> multiprocess` was specified.
+```
+WARNING: csv_output_row_filter column "^name$" does not match any output columns
+```
+
+### 7.07.07
+
+Fixed bug in `gam report <ActivityApplictionName> ... countsonly eventrowfilter` that issued an
+incorrect warning message like the following when `redirect csv <FileName> multiprocess` was specified.
+```
+WARNING: csv_output_row_filter column "^doc_title$" does not match any output columns
+```
+
+### 7.07.06
+
+Added option `eventrowfilter` to `gam calendars <CalendarEntity> print events ... countsonly`
+and `gam <UserTypeEntity> print events <UserCalendarEntity> ... countsonly` that causes
+GAM to apply `config csv_output_row_filter` to the event details rather than the event counts.
+This will be useful when `<EventSelectProperty>` and `<EventMatchProperty>` do not have the
+capabilty to select the events of interest; e.g., you want to filter based on the event `created` property.
+
+Dropped the extraneous `id` column for `gam calendars <CalendarEntity> print events ... countsonly`
+and `gam <UserTypeEntity> print events <UserCalendarEntity> ... countsonly`.
+
+### 7.07.05
+
+Updated `gam <UserTypeEntity> move drivefile` to recognize the API error: `ERROR: 400: shareOutWarning`.
+
+### 7.07.04
+
+Updated `gam create vaultexport ... rooms <ChatSpaceList>` to strip `spaces/` from the Chat Space IDs.
+
+Updated `gam <UserTypeEntity> copy drivefile` to recognize the API error: `ERROR: 400: shareOutWarning`.
+
+### 7.07.03
+
+Updated `gam create vaultexport` to allow allow specifying a list of items in a search method
+with `shareddrives|rooms|sitesurl select <FileSelector>|<CSVFileSelector>`.
+
+### 7.07.02
+
+Fixed bug in `redirect csv ... transpose` where a CSV file with multiple rows was not properly transposed.
+
+### 7.07.01
+
+Fixed bug in `gam print|show chromepolicies` that caused a trap. Made additional
+updates to handle changes in the Chrome Policy API.
+
+### 7.07.00
+
+As of mid-October 2024, Google deprecated the API that retrieved the Global Address List.
+
+The following commands have been eliminated.
+```
+gam info gal
+gam print gal
+gam show gal
+```
+
+These commands are a work-around for `gam print gal`.
+```
+gam config csv_output_row_filter "includeInGlobalAddressList:boolean:true" redirect csv ./UserGAL.csv print users fields name,gal
+gam config csv_output_row_filter "includeInGlobalAddressList:boolean:true" batch_size 25 redirect csv ./GroupGAL.csv print groups fields name,gal
+```
+
+### 7.06.14
+
+Updated `create|update adminrole` to allow specifying a collection of privileges
+with `privileges select <FileSelector>|<CSVFileSelector>` which makes copying roles much simpler.
+
+Added option `role <RoleItem>` to `gam print|show adminroles` to allow display of information
+for a specific role.
+
+### 7.06.13
+
+Updated `gam print group-members ... recursive` and `gam print cigroup-members ... recursive`
+to expand groups representing chat spaces.
+
+### 7.06.12
+
+Deleted commands to display Analytic UA properties; the API has been deprecated.
+```
+gam <UserTypeEntity> print|show analyticuaproperties
+```
+
+### 7.06.11
+
+Improved `gam checkconn`.
+
+Updated `gam print group-members` and `gam print cigroup-members` to recognize members
+that are groups representing chat spaces. For now, these groups are not expanded when
+`recursive` is specified.
+
+### 7.06.10
+
+Added the following license SKU.
+```
+1010020034 - Google Workspace Frontline Plus
+```
+
+### 7.06.09
+
+Added `gemini` and `geminiforworkspace` to `<ActivityApplicationName>` for use in
+`gam report <ActivityApplicationName>`.
+
+### 7.06.08
+
+Fixed problem where Yubikeys caused a trap.
+
+### 7.06.07
+
+Updated private key rotation progress messages in `gam create|use|update project`
+and `gam upload sakey`.
+
+Updated `gam use project` to display the following error message when the specifed project
+already has a service account.
+```
+Re-run the command specify a new service account name with: saname <ServiceAccountName>'
+```
+
+### 7.06.06
+
+Native support for Windows 11 Arm-based devices.
+
+Renamed some MacOS and Linux binary installer files to align on terminology. Everything is "arm64" now, no "aarch64".
+
+### 7.06.05
+
+Updated code in `gam delete|update chromepolicy` to handle the `policyTargetKey[additionalTargetKeys]`
+field in a more general manner for future use.
+
+### 7.06.04
+
+Fixed bug in `gam report <ActivityApplictionName>` where a report with no activities
+was not displaying any output.
+
+### 7.06.03
+
+Fixed bug in `gam <UserTypeEntity> print|show drivelastmodification` that caused a trap
+when an empty drive was specified.
+
 ### 7.06.02
 
 Updated `gam <UserTypeEntity> print|show filecounts ... showlastmodification` to include
